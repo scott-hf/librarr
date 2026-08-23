@@ -108,7 +108,16 @@ func (a *AudioBookBay) searchDomain(ctx context.Context, domain, query string) (
 				langStr = langStr[:spaceIdx]
 			}
 			langStr = strings.ToLower(strings.TrimSpace(langStr))
-			if langStr != "" && langStr != "english" {
+			// Prefix, not equality: live ABB markup emits the language and the
+			// keyword list with no separator between them --
+			//   <br />Language: English<span ...>Keywords: Action&nbsp; ...
+			// so .postInfo text reads "... Language: EnglishKeywords: Action ..."
+			// and the first-word split yields "englishkeywords:". An equality
+			// check therefore drops EVERY post that carries a keyword span,
+			// which is nearly all of them (measured 2026-08-23 against
+			// audiobookbay.lu: 9/9 results on ?s=dracula&tt=1 rejected, making
+			// the source return zero rows while still reporting search success).
+			if langStr != "" && !strings.HasPrefix(langStr, "english") {
 				return
 			}
 		}
