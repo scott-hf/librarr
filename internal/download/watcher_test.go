@@ -489,9 +489,11 @@ type deleteCall struct {
 	deleteFiles bool
 }
 
-func (f *fakeTorrentClient) AddTorrent(string, string, string, string, string) error { return nil }
-func (f *fakeTorrentClient) GetTorrents(string) ([]TorrentInfo, error)               { return nil, nil }
-func (f *fakeTorrentClient) GetTorrentFiles(string) ([]TorrentFile, error)           { return nil, nil }
+func (f *fakeTorrentClient) AddTorrent(string, string, string, string, string) (string, error) {
+	return "", nil
+}
+func (f *fakeTorrentClient) GetTorrents(string) ([]TorrentInfo, error)     { return nil, nil }
+func (f *fakeTorrentClient) GetTorrentFiles(string) ([]TorrentFile, error) { return nil, nil }
 func (f *fakeTorrentClient) DeleteTorrent(hash string, deleteFiles bool) error {
 	f.deletes = append(f.deletes, deleteCall{hash: hash, deleteFiles: deleteFiles})
 	return nil

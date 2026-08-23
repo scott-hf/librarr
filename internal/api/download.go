@@ -153,22 +153,30 @@ func (s *Server) handleTorrentDownload(w http.ResponseWriter, r *http.Request, r
 		category = s.cfg.QBMangaCategory
 	}
 
-	err = s.downloadMgr.StartTorrentDownload(url, req.Title, savePath, category, req.InfoHash)
+	hash, err := s.downloadMgr.StartTorrentDownload(url, req.Title, savePath, category, req.InfoHash)
 	var verificationWarning *download.TorrentVerificationWarning
 	if errors.As(err, &verificationWarning) {
-		writeJSON(w, http.StatusOK, map[string]interface{}{
+		resp := map[string]interface{}{
 			"success": true,
 			"title":   req.Title,
 			"error":   "",
 			"warning": errString(err),
-		})
+		}
+		if hash != "" {
+			resp["hash"] = hash
+		}
+		writeJSON(w, http.StatusOK, resp)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]interface{}{
+	resp := map[string]interface{}{
 		"success": err == nil,
 		"title":   req.Title,
 		"error":   errString(err),
-	})
+	}
+	if hash != "" {
+		resp["hash"] = hash
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (s *Server) handleDirectDownloadReq(w http.ResponseWriter, req models.DownloadRequest) {

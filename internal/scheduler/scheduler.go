@@ -206,7 +206,7 @@ func (s *Scheduler) startDownload(result models.SearchResult, title string) {
 		if url == "" {
 			url = "magnet:?xt=urn:btih:" + result.InfoHash
 		}
-		err := s.downloadMgr.StartTorrentDownload(url, title, "", "", result.InfoHash)
+		_, err := s.downloadMgr.StartTorrentDownload(url, title, "", "", result.InfoHash)
 		if err != nil {
 			var verificationWarning *download.TorrentVerificationWarning
 			if errors.As(err, &verificationWarning) {

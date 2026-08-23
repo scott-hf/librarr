@@ -16,7 +16,9 @@ type TorrentClient interface {
 	// AddTorrent submits a torrent URL, torrent file URL, or magnet link.
 	// savePath and category fall back to the client's configured defaults when
 	// empty. expectedInfoHash is optional and used for post-add verification.
-	AddTorrent(torrentURL, title, savePath, category, expectedInfoHash string) error
+	// It returns the torrent's info hash so callers can track the job without
+	// title matching; the hash may be empty if it could not be determined.
+	AddTorrent(torrentURL, title, savePath, category, expectedInfoHash string) (string, error)
 	// GetTorrents returns torrents Librarr added under the given category
 	// (empty category returns all Librarr-scoped torrents).
 	GetTorrents(category string) ([]TorrentInfo, error)

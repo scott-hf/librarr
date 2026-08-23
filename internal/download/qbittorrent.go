@@ -229,8 +229,10 @@ func (q *QBittorrentClient) doRequestContext(ctx context.Context, method, path s
 	return resp, nil
 }
 
-// AddTorrent adds a torrent to qBittorrent.
-func (q *QBittorrentClient) AddTorrent(torrentURL, title, savePath, category, expectedInfoHash string) error {
+// AddTorrent adds a torrent to qBittorrent, returning the info hash accepted
+// by verification (falling back to expectedInfoHash when verification only
+// warns rather than confirms).
+func (q *QBittorrentClient) AddTorrent(torrentURL, title, savePath, category, expectedInfoHash string) (string, error) {
 	if savePath == "" {
 		savePath = q.cfg.QBSavePath
 	}
@@ -265,20 +267,21 @@ func (q *QBittorrentClient) AddTorrent(torrentURL, title, savePath, category, ex
 	}
 	if err != nil {
 		slog.Warn("qBittorrent torrent submission failed", "title", logTitle, "category", logCategory, "error", netutil.SanitizeSensitiveText(err.Error()))
-		return err
+		return "", err
 	}
 
-	if err := q.verifyTorrentAdded(expectedInfoHash, ids, title, category); err != nil {
+	hash, err := q.verifyTorrentAdded(expectedInfoHash, ids, title, category)
+	if err != nil {
 		slog.Warn("qBittorrent torrent verification failed", "title", logTitle, "category", logCategory, "error", netutil.SanitizeSensitiveText(err.Error()))
 		var timeoutErr torrentVerificationTimeoutError
 		if errors.As(err, &timeoutErr) {
-			return &TorrentVerificationWarning{Err: err}
+			return firstNonEmptyHash(expectedInfoHash), &TorrentVerificationWarning{Err: err}
 		}
-		return err
+		return "", err
 	}
 
 	slog.Info("torrent added to qBittorrent", "title", logTitle, "category", logCategory)
-	return nil
+	return hash, nil
 }
 
 func (q *QBittorrentClient) addTorrentURL(torrentURL, savePath, category string) ([]string, error) {
@@ -776,13 +779,13 @@ func normalizeInfoHash(hash string) string {
 	return hash
 }
 
-func (q *QBittorrentClient) verifyTorrentAdded(expectedInfoHash string, addedIDs []string, title, category string) error {
+func (q *QBittorrentClient) verifyTorrentAdded(expectedInfoHash string, addedIDs []string, title, category string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), q.verifyTimeout)
 	defer cancel()
 	return q.verifyTorrentAddedContext(ctx, expectedInfoHash, addedIDs, title, category)
 }
 
-func (q *QBittorrentClient) verifyTorrentAddedContext(ctx context.Context, expectedInfoHash string, addedIDs []string, title, category string) error {
+func (q *QBittorrentClient) verifyTorrentAddedContext(ctx context.Context, expectedInfoHash string, addedIDs []string, title, category string) (string, error) {
 	expected := firstNonEmptyHash(expectedInfoHash)
 	for _, id := range addedIDs {
 		if expected == "" {
@@ -802,8 +805,8 @@ func (q *QBittorrentClient) verifyTorrentAddedContext(ctx context.Context, expec
 			}
 		} else {
 			slog.Debug("qBittorrent verification poll", "expected_hash", netutil.SanitizeLogValue(expected), "added_ids", netutil.SanitizeLogValue(strings.Join(addedIDs, ",")), "expected_category", netutil.SanitizeLogValue(category), "expected_title", netutil.SanitizeLogValue(title), "candidate_count", len(torrents))
-			if torrentListContains(torrents, expected, addedIDs, title, category) {
-				return nil
+			if hash, ok := torrentListContains(torrents, expected, addedIDs, title, category); ok {
+				return hash, nil
 			}
 		}
 
@@ -811,17 +814,19 @@ func (q *QBittorrentClient) verifyTorrentAddedContext(ctx context.Context, expec
 		case <-ctx.Done():
 			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 				if lastErr != nil {
-					return fmt.Errorf("verify torrent in qBittorrent: %w", lastErr)
+					return "", fmt.Errorf("verify torrent in qBittorrent: %w", lastErr)
 				}
-				return torrentVerificationTimeoutError{}
+				return "", torrentVerificationTimeoutError{}
 			}
-			return fmt.Errorf("verify torrent in qBittorrent: %w", ctx.Err())
+			return "", fmt.Errorf("verify torrent in qBittorrent: %w", ctx.Err())
 		case <-ticker.C:
 		}
 	}
 }
 
-func torrentListContains(torrents []TorrentInfo, expectedInfoHash string, addedIDs []string, title, expectedCategory string) bool {
+// torrentListContains reports whether torrents contains the torrent Librarr
+// just added, returning that torrent's (normalized) hash when found.
+func torrentListContains(torrents []TorrentInfo, expectedInfoHash string, addedIDs []string, title, expectedCategory string) (string, bool) {
 	expectedInfoHash = normalizeInfoHash(expectedInfoHash)
 	added := make(map[string]bool, len(addedIDs))
 	for _, id := range addedIDs {
@@ -835,19 +840,19 @@ func torrentListContains(torrents []TorrentInfo, expectedInfoHash string, addedI
 		hash := normalizeInfoHash(t.Hash)
 		if expectedInfoHash != "" && hash == expectedInfoHash {
 			slog.Debug("qBittorrent verification candidate accepted", "hash", netutil.SanitizeLogValue(hash), "name", netutil.SanitizeLogValue(t.Name), "category", netutil.SanitizeLogValue(t.Category), "save_path", netutil.SanitizeLogValue(t.SavePath), "reason", "matching info hash", "expected_category", netutil.SanitizeLogValue(expectedCategory))
-			return true
+			return hash, true
 		}
 		if added[hash] {
 			slog.Debug("qBittorrent verification candidate accepted", "hash", netutil.SanitizeLogValue(hash), "name", netutil.SanitizeLogValue(t.Name), "category", netutil.SanitizeLogValue(t.Category), "save_path", netutil.SanitizeLogValue(t.SavePath), "reason", "matching add response id", "expected_category", netutil.SanitizeLogValue(expectedCategory))
-			return true
+			return hash, true
 		}
 		if expectedInfoHash == "" && len(added) == 0 && title != "" && strings.EqualFold(strings.TrimSpace(t.Name), title) {
 			slog.Debug("qBittorrent verification candidate accepted", "hash", netutil.SanitizeLogValue(hash), "name", netutil.SanitizeLogValue(t.Name), "category", netutil.SanitizeLogValue(t.Category), "save_path", netutil.SanitizeLogValue(t.SavePath), "reason", "exact title fallback", "expected_category", netutil.SanitizeLogValue(expectedCategory))
-			return true
+			return hash, true
 		}
 		slog.Debug("qBittorrent verification candidate rejected", "hash", netutil.SanitizeLogValue(hash), "name", netutil.SanitizeLogValue(t.Name), "category", netutil.SanitizeLogValue(t.Category), "save_path", netutil.SanitizeLogValue(t.SavePath), "reason", verificationRejectReason(expectedInfoHash, added, title), "expected_category", netutil.SanitizeLogValue(expectedCategory))
 	}
-	return false
+	return "", false
 }
 
 func verificationRejectReason(expectedHash string, added map[string]bool, title string) string {

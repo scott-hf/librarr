@@ -73,7 +73,7 @@ type transmissionTorrent struct {
 // by GetTorrents; savePath becomes the download-dir. Both fall back to the
 // configured qBittorrent-equivalent defaults when empty, matching the
 // qBittorrent client's behaviour for drop-in parity.
-func (t *TransmissionClient) AddTorrent(torrentURL, title, savePath, category, expectedInfoHash string) error {
+func (t *TransmissionClient) AddTorrent(torrentURL, title, savePath, category, expectedInfoHash string) (string, error) {
 	if savePath == "" {
 		savePath = t.cfg.QBSavePath
 	}
@@ -96,16 +96,41 @@ func (t *TransmissionClient) AddTorrent(torrentURL, title, savePath, category, e
 	resp, err := t.call("torrent-add", args)
 	t.mu.Unlock()
 	if err != nil {
-		return err
+		return "", err
 	}
 	if resp.Result != "success" {
-		return fmt.Errorf("transmission add torrent: %s", resp.Result)
+		return "", fmt.Errorf("transmission add torrent: %s", resp.Result)
 	}
 
 	// A "torrent-duplicate" result is not an error — the torrent is already
 	// present, which is the desired end state.
 	slog.Info("torrent added to Transmission", "title", title, "category", category)
-	return nil
+
+	hash := transmissionAddedHash(resp.Arguments)
+	if hash == "" {
+		hash = firstNonEmptyHash(expectedInfoHash, infoHashFromMagnet(torrentURL))
+	}
+	return hash, nil
+}
+
+// transmissionAddedHash extracts the info hash Transmission reports for a
+// torrent-add call. The RPC response nests it under "torrent-added" (newly
+// added) or "torrent-duplicate" (already present) depending on outcome.
+func transmissionAddedHash(args map[string]interface{}) string {
+	for _, key := range []string{"torrent-added", "torrent-duplicate"} {
+		raw, ok := args[key]
+		if !ok {
+			continue
+		}
+		m, ok := raw.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if h, ok := m["hashString"].(string); ok && h != "" {
+			return normalizeInfoHash(h)
+		}
+	}
+	return ""
 }
 
 // GetTorrents returns Librarr-scoped torrents, optionally filtered to a single

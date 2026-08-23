@@ -270,7 +270,7 @@ func TestQBittorrentAddTorrentAcceptsJSONSuccess(t *testing.T) {
 
 	q := newAddTorrentTestQBClient(srv.URL, srv.Client())
 
-	if err := q.AddTorrent("magnet:?xt=urn:btih:e2f71d638953c009f17594d6982c6de68b06d985", "Test Book", "", "", ""); err != nil {
+	if _, err := q.AddTorrent("magnet:?xt=urn:btih:e2f71d638953c009f17594d6982c6de68b06d985", "Test Book", "", "", ""); err != nil {
 		t.Fatalf("AddTorrent returned error: %v", err)
 	}
 }
@@ -293,7 +293,7 @@ func TestQBittorrentAddTorrentAcceptsOkBody(t *testing.T) {
 
 	q := newAddTorrentTestQBClient(srv.URL, srv.Client())
 
-	if err := q.AddTorrent("magnet:?xt=urn:btih:abc", "Test Book", "", "", ""); err != nil {
+	if _, err := q.AddTorrent("magnet:?xt=urn:btih:abc", "Test Book", "", "", ""); err != nil {
 		t.Fatalf("AddTorrent returned error: %v", err)
 	}
 }
@@ -315,7 +315,7 @@ func TestQBittorrentAddTorrentRejectsHTTPError(t *testing.T) {
 
 	q := newAddTorrentTestQBClient(srv.URL, srv.Client())
 
-	err := q.AddTorrent("magnet:?xt=urn:btih:abc", "Test Book", "", "", "")
+	_, err := q.AddTorrent("magnet:?xt=urn:btih:abc", "Test Book", "", "", "")
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -342,7 +342,7 @@ func TestQBittorrentAddTorrentRejectsJSONFailure(t *testing.T) {
 
 	q := newAddTorrentTestQBClient(srv.URL, srv.Client())
 
-	err := q.AddTorrent("magnet:?xt=urn:btih:abc", "Test Book", "", "", "")
+	_, err := q.AddTorrent("magnet:?xt=urn:btih:abc", "Test Book", "", "", "")
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -370,7 +370,7 @@ func TestQBittorrentAddTorrentAcceptsJSONPending(t *testing.T) {
 
 	q := newAddTorrentTestQBClient(srv.URL, srv.Client())
 
-	if err := q.AddTorrent("magnet:?xt=urn:btih:abc", "Test Book", "", "", ""); err != nil {
+	if _, err := q.AddTorrent("magnet:?xt=urn:btih:abc", "Test Book", "", "", ""); err != nil {
 		t.Fatalf("AddTorrent returned error: %v", err)
 	}
 }
@@ -393,7 +393,7 @@ func TestQBittorrentAddTorrentRejectsJSONPartialFailure(t *testing.T) {
 
 	q := newAddTorrentTestQBClient(srv.URL, srv.Client())
 
-	err := q.AddTorrent("magnet:?xt=urn:btih:e2f71d638953c009f17594d6982c6de68b06d985", "Test Book", "", "", "")
+	_, err := q.AddTorrent("magnet:?xt=urn:btih:e2f71d638953c009f17594d6982c6de68b06d985", "Test Book", "", "", "")
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -467,8 +467,12 @@ func TestQBittorrentHTTPURLFetchedAndUploadedAsMultipart(t *testing.T) {
 	q.cfg.ProwlarrURL = srv.URL
 	q.cfg.ProwlarrAPIKey = "prowlarr-key"
 
-	if err := q.AddTorrent(srv.URL+"/download/book.torrent", "Search Result Name", "", "", hash); err != nil {
+	gotHash, err := q.AddTorrent(srv.URL+"/download/book.torrent", "Search Result Name", "", "", hash)
+	if err != nil {
 		t.Fatalf("AddTorrent returned error: %v", err)
+	}
+	if gotHash != hash {
+		t.Fatalf("AddTorrent hash = %q, want %q (Prowlarr .torrent upload should return the fetched bencode info hash)", gotHash, hash)
 	}
 	if !sawDownload {
 		t.Fatal("expected Librarr to fetch torrent URL")
@@ -669,8 +673,12 @@ func TestQBittorrentMagnetStillUsesURLFormField(t *testing.T) {
 	defer srv.Close()
 
 	q := newAddTorrentTestQBClient(srv.URL, srv.Client())
-	if err := q.AddTorrent("magnet:?xt=urn:btih:"+hash, "Magnet Book", "", "", ""); err != nil {
+	gotHash, err := q.AddTorrent("magnet:?xt=urn:btih:"+hash, "Magnet Book", "", "", "")
+	if err != nil {
 		t.Fatalf("AddTorrent returned error: %v", err)
+	}
+	if gotHash != hash {
+		t.Fatalf("AddTorrent hash = %q, want %q (magnet info hash)", gotHash, hash)
 	}
 }
 
@@ -705,13 +713,13 @@ func TestTorrentVerificationMatchesHashAcrossCategoryAndName(t *testing.T) {
 	defer srv.Close()
 
 	q := newAddTorrentTestQBClient(srv.URL, srv.Client())
-	if err := q.AddTorrent("magnet:?xt=urn:btih:"+hash, "Search Result Name", "", "librarr", ""); err != nil {
+	if _, err := q.AddTorrent("magnet:?xt=urn:btih:"+hash, "Search Result Name", "", "librarr", ""); err != nil {
 		t.Fatalf("AddTorrent returned error: %v", err)
 	}
 }
 
 func TestTorrentVerificationIgnoresUnrelatedTorrents(t *testing.T) {
-	if torrentListContains([]TorrentInfo{{Name: "Other", Hash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", nil, "Target", "librarr") {
+	if _, ok := torrentListContains([]TorrentInfo{{Name: "Other", Hash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", nil, "Target", "librarr"); ok {
 		t.Fatal("unrelated torrent was accepted")
 	}
 }
@@ -746,7 +754,7 @@ func TestTorrentVerificationContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	start := time.Now()
-	err := q.verifyTorrentAddedContext(ctx, "abc", nil, "Target", "librarr")
+	_, err := q.verifyTorrentAddedContext(ctx, "abc", nil, "Target", "librarr")
 	if err == nil || time.Since(start) > time.Second {
 		t.Fatalf("verification cancellation error=%v duration=%s", err, time.Since(start))
 	}
@@ -808,7 +816,7 @@ func TestQBittorrentVerificationTimeout(t *testing.T) {
 	defer srv.Close()
 
 	q := newAddTorrentTestQBClient(srv.URL, srv.Client())
-	err := q.AddTorrent("magnet:?xt=urn:btih:abc", "Missing Book", "", "", "")
+	_, err := q.AddTorrent("magnet:?xt=urn:btih:abc", "Missing Book", "", "", "")
 	if err == nil {
 		t.Fatal("expected verification timeout")
 	}
@@ -847,7 +855,7 @@ func TestQBittorrentVerificationWaitsForDelayedVisibility(t *testing.T) {
 	q := newAddTorrentTestQBClient(srv.URL, srv.Client())
 	q.verifyTimeout = 300 * time.Millisecond
 	q.verifyInterval = 20 * time.Millisecond
-	if err := q.AddTorrent("magnet:?xt=urn:btih:abc", "Delayed Book", "", "", ""); err != nil {
+	if _, err := q.AddTorrent("magnet:?xt=urn:btih:abc", "Delayed Book", "", "", ""); err != nil {
 		t.Fatalf("AddTorrent returned error for delayed visibility: %v", err)
 	}
 	if infoCalls < 4 {
@@ -873,7 +881,7 @@ func TestQBittorrentVerificationAPIError(t *testing.T) {
 	defer srv.Close()
 
 	q := newAddTorrentTestQBClient(srv.URL, srv.Client())
-	err := q.AddTorrent("magnet:?xt=urn:btih:abc", "Broken Info", "", "", "")
+	_, err := q.AddTorrent("magnet:?xt=urn:btih:abc", "Broken Info", "", "", "")
 	if err == nil {
 		t.Fatal("expected verification API error")
 	}
@@ -912,7 +920,7 @@ func TestQBittorrentPublicTorrentURLPassedThrough(t *testing.T) {
 	q.cfg.ProwlarrURL = "http://prowlarr.internal:9696"
 	q.cfg.ProwlarrAPIKey = "prowlarr-key"
 
-	if err := q.AddTorrent(publicURL, "Manga Volume", "", "", hash); err != nil {
+	if _, err := q.AddTorrent(publicURL, "Manga Volume", "", "", hash); err != nil {
 		t.Fatalf("AddTorrent returned error for public torrent URL: %v", err)
 	}
 }
@@ -940,7 +948,7 @@ func TestQBittorrentHTTPURLWithoutProwlarrPassedThrough(t *testing.T) {
 	defer srv.Close()
 
 	q := newAddTorrentTestQBClient(srv.URL, srv.Client())
-	if err := q.AddTorrent("https://tracker.example/file.torrent", "Some Book", "", "", hash); err != nil {
+	if _, err := q.AddTorrent("https://tracker.example/file.torrent", "Some Book", "", "", hash); err != nil {
 		t.Fatalf("AddTorrent returned error without Prowlarr configured: %v", err)
 	}
 }

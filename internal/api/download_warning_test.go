@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/JeremiahM37/librarr/internal/config"
@@ -15,11 +16,12 @@ import (
 )
 
 type downloadWarningTorrentClient struct {
-	err error
+	err  error
+	hash string
 }
 
-func (c downloadWarningTorrentClient) AddTorrent(string, string, string, string, string) error {
-	return c.err
+func (c downloadWarningTorrentClient) AddTorrent(string, string, string, string, string) (string, error) {
+	return c.hash, c.err
 }
 
 func (downloadWarningTorrentClient) GetTorrents(string) ([]download.TorrentInfo, error) {
@@ -81,5 +83,36 @@ func TestHandleTorrentDownloadKeepsQBitFailureAsFailure(t *testing.T) {
 	}
 	if response["success"] != false || response["error"] != "qBittorrent API failure" {
 		t.Fatalf("response = %s, want hard failure", rr.Body.String())
+	}
+	if _, present := response["hash"]; present {
+		t.Fatalf("response = %s, want no hash key on a hard failure", rr.Body.String())
+	}
+}
+
+// TestHandleDownloadAudiobookReturnsHash covers the audiobook download entry
+// point (handleDownloadAudiobook -> handleTorrentDownload): the response must
+// carry the torrent's info hash so a client can track the job without title
+// matching.
+func TestHandleDownloadAudiobookReturnsHash(t *testing.T) {
+	const wantHash = "e2f71d638953c009f17594d6982c6de68b06d985"
+	server := newDownloadWarningTestServer(t, downloadWarningTorrentClient{hash: wantHash})
+	body, err := json.Marshal(models.DownloadRequest{Title: "Test Audiobook", Source: "torrent", DownloadURL: "magnet:?xt=urn:btih:" + wantHash})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := httptest.NewRequest("POST", "/api/download/audiobook", strings.NewReader(string(body)))
+	rr := httptest.NewRecorder()
+
+	server.handleDownloadAudiobook(rr, r)
+
+	var response map[string]interface{}
+	if err := json.Unmarshal(rr.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response["success"] != true {
+		t.Fatalf("response = %s, want success", rr.Body.String())
+	}
+	if response["hash"] != wantHash {
+		t.Fatalf("response = %s, want hash %q", rr.Body.String(), wantHash)
 	}
 }

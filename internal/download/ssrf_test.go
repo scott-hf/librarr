@@ -46,9 +46,9 @@ type recordingTorrentClient struct {
 	added []string
 }
 
-func (r *recordingTorrentClient) AddTorrent(torrentURL, title, savePath, category, expectedInfoHash string) error {
+func (r *recordingTorrentClient) AddTorrent(torrentURL, title, savePath, category, expectedInfoHash string) (string, error) {
 	r.added = append(r.added, torrentURL)
-	return nil
+	return "", nil
 }
 func (r *recordingTorrentClient) GetTorrents(category string) ([]TorrentInfo, error) { return nil, nil }
 func (r *recordingTorrentClient) GetTorrentFiles(hash string) ([]TorrentFile, error) { return nil, nil }
@@ -70,7 +70,7 @@ func TestStartTorrentDownloadRejectsInternalURLs(t *testing.T) {
 		"http://172.18.0.1:80/",
 		"file:///etc/passwd",
 	} {
-		if err := m.StartTorrentDownload(u, "t", "", "", ""); err == nil {
+		if _, err := m.StartTorrentDownload(u, "t", "", "", ""); err == nil {
 			t.Errorf("expected %s to be rejected before reaching the torrent client", u)
 		}
 	}
@@ -91,7 +91,7 @@ func TestStartTorrentDownloadAllowsLegitimateTargets(t *testing.T) {
 		"https://example.org/torrents/book.torrent",
 		"http://192.168.1.225:9696/1/download?apikey=x&link=y",
 	} {
-		if err := m.StartTorrentDownload(u, "t", "", "", ""); err != nil {
+		if _, err := m.StartTorrentDownload(u, "t", "", "", ""); err != nil {
 			t.Errorf("expected %s to be allowed, got %v", u, err)
 		}
 	}
