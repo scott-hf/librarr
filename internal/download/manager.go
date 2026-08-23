@@ -95,13 +95,14 @@ func (m *Manager) StartAnnasDownload(md5, title string) (*models.DownloadJob, er
 	return job, nil
 }
 
-// StartTorrentDownload adds a torrent to the active torrent client.
-func (m *Manager) StartTorrentDownload(torrentURL, title, savePath, category, expectedInfoHash string) error {
+// StartTorrentDownload adds a torrent to the active torrent client, returning
+// its info hash so callers can track the job without title matching.
+func (m *Manager) StartTorrentDownload(torrentURL, title, savePath, category, expectedInfoHash string) (string, error) {
 	if m.torrent == nil {
-		return fmt.Errorf("no torrent download client configured")
+		return "", fmt.Errorf("no torrent download client configured")
 	}
 	if err := m.validateClientFetchURL(torrentURL); err != nil {
-		return err
+		return "", err
 	}
 	return m.torrent.AddTorrent(torrentURL, title, savePath, category, expectedInfoHash)
 }
