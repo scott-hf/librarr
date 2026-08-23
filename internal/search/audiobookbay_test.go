@@ -66,6 +66,61 @@ func TestAudioBookBaySearchSetsBrowserHeaders(t *testing.T) {
 	}
 }
 
+// Live AudioBookBay markup puts the keyword span immediately after the
+// language with no separating whitespace, so .postInfo text reads
+// "Language: EnglishKeywords: ...". The language gate must still accept it.
+func TestAudioBookBaySearchAcceptsLanguageRunTogetherWithKeywords(t *testing.T) {
+	cases := []struct {
+		name     string
+		postInfo string
+		want     int
+	}{
+		{
+			name:     "english run together with keywords",
+			postInfo: `Category: Horror&nbsp; <br />Language: English<span style="margin-left:100px;">Keywords: Classic&nbsp; Gothic&nbsp; </span><br />`,
+			want:     1,
+		},
+		{
+			name:     "english with separating space",
+			postInfo: `Language: English <span style="margin-left:100px;">Keywords:</span>`,
+			want:     1,
+		},
+		{
+			name:     "non-english run together with keywords is still rejected",
+			postInfo: `Language: German<span style="margin-left:100px;">Keywords: Klassiker&nbsp; </span>`,
+			want:     0,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rt := &abbRoundTripper{
+				body: `<html><body>
+				<div class="post">
+					<div class="postTitle"><h2><a href="/abss/dracula-bram-stoker/">Dracula - Bram Stoker</a></h2></div>
+					<div class="postInfo">` + tc.postInfo + `</div>
+				</div>
+				</body></html>`,
+			}
+			reg, err := sourcestest.Registry()
+			if err != nil {
+				t.Fatalf("load registry: %v", err)
+			}
+			cfg := &config.Config{UserAgent: "test", Sources: reg}
+			cfg.Sources.AudioBookBay.Mirrors = []string{"audiobookbay.lu"}
+			a := &AudioBookBay{cfg: cfg, client: &http.Client{Transport: rt}}
+
+			results, err := a.searchDomain(context.Background(), "audiobookbay.lu", "Dracula")
+			if err != nil {
+				t.Fatalf("searchDomain returned error: %v", err)
+			}
+			if len(results) != tc.want {
+				t.Fatalf("got %d results, want %d", len(results), tc.want)
+			}
+		})
+	}
+}
+
 func TestResolveABBMagnetUsesBrowserHeaders(t *testing.T) {
 	rt := &abbRoundTripper{
 		body: `<html><body>
