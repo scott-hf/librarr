@@ -8,10 +8,12 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"unicode"
 
 	"github.com/JeremiahM37/librarr/internal/config"
 	"github.com/JeremiahM37/librarr/internal/models"
 	"github.com/PuerkitoBio/goquery"
+	"golang.org/x/net/html"
 )
 
 const abbBrowserUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
@@ -123,11 +125,11 @@ func (a *AudioBookBay) searchDomain(ctx context.Context, domain, query string) (
 		}
 
 		// Check language if present.
-		infoText := post.Find(".postInfo").Text()
+		infoText := abbPostInfoText(post.Find(".postInfo"))
 		if langIdx := strings.Index(strings.ToLower(infoText), "language:"); langIdx >= 0 {
 			langStr := strings.TrimSpace(infoText[langIdx+9:])
 			// Take first word as language.
-			if spaceIdx := strings.IndexAny(langStr, " \t\n,"); spaceIdx > 0 {
+			if spaceIdx := strings.IndexFunc(langStr, func(r rune) bool { return unicode.IsSpace(r) || r == ',' }); spaceIdx > 0 {
 				langStr = langStr[:spaceIdx]
 			}
 			langStr = strings.ToLower(strings.TrimSpace(langStr))
@@ -140,6 +142,12 @@ func (a *AudioBookBay) searchDomain(ctx context.Context, domain, query string) (
 			// which is nearly all of them (measured 2026-08-23 against
 			// audiobookbay.lu: 9/9 results on ?s=dracula&tt=1 rejected, making
 			// the source return zero rows while still reporting search success).
+			//
+			// Upstream 3997adc fixes the cause: abbPostInfoText keeps a
+			// boundary between adjacent elements, so the first word is now
+			// "english" on its own. The prefix check stays as a second line
+			// of defence in case the markup changes so that two text nodes
+			// run together again (both checks are covered by tests).
 			if langStr != "" && !strings.HasPrefix(langStr, "english") {
 				return
 			}
@@ -157,6 +165,27 @@ func (a *AudioBookBay) searchDomain(ctx context.Context, domain, query string) (
 	})
 
 	return results, nil
+}
+
+// abbPostInfoText preserves boundaries between fields in adjacent HTML elements.
+// Selection.Text joins "English<span>Keywords:" into "EnglishKeywords:".
+func abbPostInfoText(info *goquery.Selection) string {
+	var text strings.Builder
+	var walk func(*html.Node)
+	walk = func(n *html.Node) {
+		if n.Type == html.TextNode {
+			text.WriteString(n.Data)
+		}
+		for child := n.FirstChild; child != nil; child = child.NextSibling {
+			text.WriteByte(' ')
+			walk(child)
+		}
+		text.WriteByte(' ')
+	}
+	for _, node := range info.Nodes {
+		walk(node)
+	}
+	return text.String()
 }
 
 // ResolveABBMagnet fetches the detail page for an AudioBookBay result and extracts
