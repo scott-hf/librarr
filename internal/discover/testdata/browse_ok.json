@@ -1,0 +1,27 @@
+{
+  "status": "ok",
+  "error": "",
+  "catalog": "popular",
+  "genre": "science fiction",
+  "offset": 0,
+  "next_offset": 20,
+  "partial": false,
+  "items": [
+    {
+      "key": "/works/OL893415W",
+      "title": "Dune",
+      "author": "Frank Herbert",
+      "cover_url": "https://covers.openlibrary.org/b/id/12345-M.jpg",
+      "year": 1965,
+      "popularity": 9100
+    },
+    {
+      "key": "/works/OL17930368W",
+      "title": "Project Hail Mary",
+      "author": "Andy Weir",
+      "cover_url": "https://covers.openlibrary.org/b/id/67890-M.jpg",
+      "year": 2021,
+      "popularity": 7400
+    }
+  ]
+}

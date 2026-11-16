@@ -117,14 +117,16 @@ func ClampLimit(limit int) int {
 	return limit
 }
 
+// The cache and the in-flight table hold either a Result (shelves) or a
+// BrowseResult (catalog browse); typed wrappers (do, doBrowse) own the type.
 type cacheEntry struct {
-	res     Result
+	res     any
 	expires time.Time
 }
 
 type call struct {
 	done    chan struct{}
-	res     Result
+	res     any
 	waiters int
 }
 
@@ -304,6 +306,20 @@ func normTitle(t string) string {
 // starts one. The fetch runs detached from the caller's cancellation (with its
 // own timeout) so one cancelled caller cannot fail the others.
 func (c *Client) do(ctx context.Context, key string, compute func(context.Context) (Result, time.Duration)) Result {
+	cancelled := failure(StatusUpstreamUnavailable, "request cancelled")
+	v := c.doAny(ctx, key, cancelled, failure(StatusUpstreamUnavailable, "internal error"), func(fctx context.Context) (any, time.Duration) {
+		return compute(fctx)
+	})
+	if r, ok := v.(Result); ok {
+		return r
+	}
+	return cancelled
+}
+
+// doAny is do for any cached value type. cancelVal is returned when the
+// caller is cancelled and panicVal when compute panics; both must be the
+// type compute returns.
+func (c *Client) doAny(ctx context.Context, key string, cancelVal, panicVal any, compute func(context.Context) (any, time.Duration)) any {
 	c.mu.Lock()
 	if e, ok := c.cache[key]; ok {
 		if c.now().Before(e.expires) {
@@ -316,7 +332,7 @@ func (c *Client) do(ctx context.Context, key string, compute func(context.Contex
 	if !joined {
 		cl = &call{done: make(chan struct{})}
 		c.inflight[key] = cl
-		go c.run(ctx, key, cl, compute)
+		go c.run(ctx, key, cl, panicVal, compute)
 	}
 	cl.waiters++
 	c.mu.Unlock()
@@ -325,14 +341,14 @@ func (c *Client) do(ctx context.Context, key string, compute func(context.Contex
 	case <-cl.done:
 		return cl.res
 	case <-ctx.Done():
-		return failure(StatusUpstreamUnavailable, "request cancelled")
+		return cancelVal
 	}
 }
 
-func (c *Client) run(ctx context.Context, key string, cl *call, compute func(context.Context) (Result, time.Duration)) {
+func (c *Client) run(ctx context.Context, key string, cl *call, panicVal any, compute func(context.Context) (any, time.Duration)) {
 	fctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), fetchTimeout)
 	defer cancel()
-	res, ttl := failure(StatusUpstreamUnavailable, "internal error"), time.Duration(0)
+	res, ttl := panicVal, time.Duration(0)
 	func() {
 		defer func() {
 			if r := recover(); r != nil {
@@ -353,7 +369,7 @@ func (c *Client) run(ctx context.Context, key string, cl *call, compute func(con
 }
 
 // store inserts into the bounded cache. Caller holds c.mu.
-func (c *Client) store(key string, res Result, ttl time.Duration) {
+func (c *Client) store(key string, res any, ttl time.Duration) {
 	now := c.now()
 	if len(c.cache) >= maxCacheSize {
 		for k, e := range c.cache {
@@ -396,14 +412,31 @@ type olResponse struct {
 	Docs     []olDoc `json:"docs"`
 }
 
-func (c *Client) query(ctx context.Context, field, value string, sorted bool) (*olResponse, error) {
+// olParams is one Open Library search. Exactly one of field/value (a plain
+// field parameter such as subject=) or q (a free-form Solr query) is used.
+type olParams struct {
+	field, value string
+	q            string
+	sort         string // "" = relevance
+	offset       int
+	sendOffset   bool // send offset even when 0 (browse pins it)
+}
+
+func (c *Client) query(ctx context.Context, p olParams) (*olResponse, error) {
 	if err := c.lim.wait(ctx); err != nil {
 		return nil, err
 	}
 	q := url.Values{}
-	q.Set(field, value)
-	if sorted {
-		q.Set("sort", "readinglog")
+	if p.q != "" {
+		q.Set("q", p.q)
+	} else {
+		q.Set(p.field, p.value)
+	}
+	if p.sort != "" {
+		q.Set("sort", p.sort)
+	}
+	if p.offset > 0 || p.sendOffset {
+		q.Set("offset", strconv.Itoa(p.offset))
 	}
 	q.Set("language", "eng")
 	q.Set("limit", strconv.Itoa(olFetchLimit))
@@ -460,7 +493,7 @@ func sortTrusted(r *olResponse) bool {
 // an untrusted 200 it retries once without sort; transport errors, 429 and 5xx
 // are not sort problems and are returned as is.
 func (c *Client) ranked(ctx context.Context, field, value string) ([]olDoc, error) {
-	resp, err := c.query(ctx, field, value, true)
+	resp, err := c.query(ctx, olParams{field: field, value: value, sort: "readinglog"})
 	if err == nil && sortTrusted(resp) {
 		return resp.Docs, nil
 	}
@@ -468,7 +501,7 @@ func (c *Client) ranked(ctx context.Context, field, value string) ([]olDoc, erro
 		return nil, err
 	}
 	slog.Warn("discover: sorted Open Library search unusable, retrying without sort", "field", field, "value", value, "err", err)
-	resp, err = c.query(ctx, field, value, false)
+	resp, err = c.query(ctx, olParams{field: field, value: value})
 	if err != nil {
 		return nil, err
 	}

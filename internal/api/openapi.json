@@ -56,6 +56,51 @@
           }
         }
       },
+      "DiscoverOptionsResponse": {
+        "type": "object",
+        "required": ["status", "error", "catalogs", "genres"],
+        "properties": {
+          "status":   {"type": "string", "enum": ["ok", "upstream_unavailable"]},
+          "error":    {"type": "string"},
+          "catalogs": {"type": "array", "items": {"$ref": "#/components/schemas/DiscoverOption"}},
+          "genres":   {"type": "array", "items": {"$ref": "#/components/schemas/DiscoverOption"}}
+        }
+      },
+      "DiscoverOption": {
+        "type": "object",
+        "required": ["id", "label"],
+        "properties": {
+          "id":    {"type": "string", "description": "Value to send back as catalog= or genre=."},
+          "label": {"type": "string"}
+        }
+      },
+      "DiscoverBrowseResponse": {
+        "type": "object",
+        "required": ["status", "error", "catalog", "genre", "offset", "next_offset", "partial", "items"],
+        "properties": {
+          "status":      {"type": "string", "enum": ["ok", "empty", "invalid_request", "upstream_unavailable", "rate_limited"]},
+          "error":       {"type": "string", "description": "Human-readable reason when status is not ok; empty otherwise."},
+          "catalog":     {"type": "string", "description": "Echo of the requested catalog."},
+          "genre":       {"type": "string", "description": "Echo of the requested genre (normalized); empty for all genres."},
+          "offset":      {"type": "integer", "description": "Echo of the requested offset."},
+          "next_offset": {"type": ["integer", "null"], "description": "Offset of the next page; null on the last page or when partial."},
+          "partial":     {"type": "boolean", "description": "True when the popular page fell back to Open Library relevance order; no further pages are offered."},
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "key":        {"type": "string", "description": "Open Library work key, e.g. /works/OL45804W."},
+                "title":      {"type": "string"},
+                "author":     {"type": "string"},
+                "cover_url":  {"type": "string"},
+                "year":       {"type": "integer", "description": "First publish year; 0 when unknown."},
+                "popularity": {"type": "integer", "description": "Open Library reading-log count."}
+              }
+            }
+          }
+        }
+      },
       "SearchResult": {
         "type": "object",
         "description": "A single search hit. Fields are populated per driver — direct-download drivers omit seeders/leechers; torrent drivers usually omit MD5.",
@@ -202,6 +247,35 @@
           "200": {
             "description": "Shelf items",
             "content": {"application/json": {"schema": {"$ref": "#/components/schemas/DiscoverResponse"}}}
+          }
+        }
+      }
+    },
+    "/api/discover/options": {
+      "get": {
+        "summary": "Catalogs and genres the app can browse",
+        "description": "Static list; no Open Library call. The client offers exactly what this lists. An older Librarr answers 404, which clients treat as 'browse not available'. Responses carry Cache-Control: no-cache.",
+        "responses": {
+          "200": {
+            "description": "Catalog and genre options",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/DiscoverOptionsResponse"}}}
+          }
+        }
+      }
+    },
+    "/api/discover/browse": {
+      "get": {
+        "summary": "One page of an Open Library catalog (popular, new, top rated), optionally for one genre",
+        "description": "Open Library failures are reported in the body's status field with HTTP 200; only auth/transport failures are HTTP errors. A page is 20 Open Library docs; cover-less and duplicate docs are dropped, so fewer than 20 items is normal. next_offset is null on the last page (and when partial is true). An unknown catalog, unusable genre or bad offset gives status invalid_request. Results are cached for 30 minutes per (catalog, genre, offset); failures for 30 seconds.",
+        "parameters": [
+          {"name": "catalog", "in": "query", "required": true,  "schema": {"type": "string", "enum": ["popular", "new", "top_rated"]}},
+          {"name": "genre",   "in": "query", "required": false, "schema": {"type": "string"}, "description": "A genre id from /api/discover/options or a raw Audiobookshelf genre string (normalized to its first token). Omit for all genres."},
+          {"name": "offset",  "in": "query", "required": false, "schema": {"type": "integer", "minimum": 0, "maximum": 180, "multipleOf": 20, "default": 0}}
+        ],
+        "responses": {
+          "200": {
+            "description": "Catalog page",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/DiscoverBrowseResponse"}}}
           }
         }
       }
