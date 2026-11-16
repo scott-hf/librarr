@@ -76,7 +76,12 @@ func decodeDiscover(t *testing.T, rr *httptest.ResponseRecorder) discover.Result
 
 func TestDiscoverRequiresAuth(t *testing.T) {
 	h, _, hits := discoverTestServer(t)
-	for _, p := range []string{"/api/discover/popular?genre=Fantasy", "/api/discover/similar?title=T&author=A"} {
+	for _, p := range []string{
+		"/api/discover/popular?genre=Fantasy",
+		"/api/discover/similar?title=T&author=A",
+		"/api/discover/options",
+		"/api/discover/browse?catalog=popular",
+	} {
 		if rr := getDiscover(h, p, ""); rr.Code != http.StatusUnauthorized {
 			t.Errorf("%s without key: HTTP %d, want 401", p, rr.Code)
 		}
@@ -181,9 +186,122 @@ func TestDiscoverWithoutClientDegrades(t *testing.T) {
 	}
 }
 
+func decodeStrict(t *testing.T, rr *httptest.ResponseRecorder, v any) {
+	t.Helper()
+	dec := json.NewDecoder(strings.NewReader(rr.Body.String()))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(v); err != nil {
+		t.Fatalf("body does not match the wire type: %v\n%s", err, rr.Body.String())
+	}
+}
+
+func TestDiscoverOptionsHandler(t *testing.T) {
+	h, _, hits := discoverTestServer(t)
+	rr := getDiscover(h, "/api/discover/options", "k")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("HTTP %d: %s", rr.Code, rr.Body.String())
+	}
+	var res discover.OptionsResult
+	decodeStrict(t, rr, &res)
+	if res.Status != discover.StatusOK || len(res.Catalogs) != 3 || len(res.Genres) != len(discover.CuratedGenres()) {
+		t.Errorf("got %+v", res)
+	}
+	if got := res.Catalogs[0]; got.ID != "popular" || got.Label != "Popular" {
+		t.Errorf("first catalog %+v", got)
+	}
+	if hits.Load() != 0 {
+		t.Errorf("options reached Open Library (%d)", hits.Load())
+	}
+}
+
+func TestDiscoverBrowseHandler(t *testing.T) {
+	h, queries, _ := discoverTestServer(t)
+	rr := getDiscover(h, "/api/discover/browse?catalog=new&genre=Science+Fiction&offset=20", "k")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("HTTP %d: %s", rr.Code, rr.Body.String())
+	}
+	var res discover.BrowseResult
+	decodeStrict(t, rr, &res)
+	if res.Status != discover.StatusOK || res.Catalog != "new" || res.Genre != "Science Fiction" || res.Offset != 20 {
+		t.Errorf("echo/status wrong: %+v", res)
+	}
+	if res.NextOffset == nil || *res.NextOffset != 40 || res.Partial || len(res.Items) == 0 {
+		t.Errorf("paging wrong: next=%v partial=%v items=%d", res.NextOffset, res.Partial, len(res.Items))
+	}
+	q := (*queries)[0]
+	if !strings.Contains(q.Get("q"), `subject:"science fiction"`) || q.Get("sort") != "readinglog" || q.Get("offset") != "20" {
+		t.Errorf("OL query %v", q)
+	}
+}
+
+func TestDiscoverBrowseBadInputIsHTTP200WithInvalidRequest(t *testing.T) {
+	h, _, hits := discoverTestServer(t)
+	for _, p := range []string{
+		"/api/discover/browse",
+		"/api/discover/browse?catalog=trending",
+		"/api/discover/browse?catalog=popular&offset=abc",
+		"/api/discover/browse?catalog=popular&offset=7",
+		"/api/discover/browse?catalog=popular&offset=200",
+		"/api/discover/browse?catalog=popular&offset=-20",
+		"/api/discover/browse?catalog=popular&genre=a%22b",
+	} {
+		rr := getDiscover(h, p, "k")
+		if rr.Code != http.StatusOK {
+			t.Errorf("%s: HTTP %d, want 200", p, rr.Code)
+			continue
+		}
+		var res discover.BrowseResult
+		decodeStrict(t, rr, &res)
+		if res.Status != discover.StatusInvalidRequest || res.Error == "" || len(res.Items) != 0 || res.NextOffset != nil {
+			t.Errorf("%s: %+v", p, res)
+		}
+		if !strings.Contains(rr.Body.String(), `"items":[]`) || !strings.Contains(rr.Body.String(), `"next_offset":null`) {
+			t.Errorf("%s: items must be [] and next_offset null: %s", p, rr.Body.String())
+		}
+	}
+	if hits.Load() != 0 {
+		t.Errorf("bad input reached Open Library (%d)", hits.Load())
+	}
+}
+
+func TestEveryDiscoverResponseIsNoCache(t *testing.T) {
+	h, _, _ := discoverTestServer(t)
+	for _, p := range []string{
+		"/api/discover/popular?genre=Fantasy",
+		"/api/discover/popular",
+		"/api/discover/similar?title=Book+0&author=A",
+		"/api/discover/options",
+		"/api/discover/browse?catalog=popular&genre=fantasy",
+		"/api/discover/browse?catalog=nope",
+	} {
+		rr := getDiscover(h, p, "k")
+		if got := rr.Header().Get("Cache-Control"); got != "no-cache" {
+			t.Errorf("%s: Cache-Control %q, want no-cache", p, got)
+		}
+	}
+}
+
+func TestDiscoverBrowseAndOptionsWithoutClientDegrade(t *testing.T) {
+	s := &Server{}
+	rr := httptest.NewRecorder()
+	s.handleDiscoverBrowse(rr, httptest.NewRequest(http.MethodGet, "/api/discover/browse?catalog=new&genre=x&offset=40", nil))
+	var b discover.BrowseResult
+	decodeStrict(t, rr, &b)
+	if rr.Code != http.StatusOK || b.Status != discover.StatusUpstreamUnavailable || b.Catalog != "new" || b.Offset != 40 || b.Items == nil {
+		t.Errorf("browse: HTTP %d %+v", rr.Code, b)
+	}
+	rr = httptest.NewRecorder()
+	s.handleDiscoverOptions(rr, httptest.NewRequest(http.MethodGet, "/api/discover/options", nil))
+	var o discover.OptionsResult
+	decodeStrict(t, rr, &o)
+	if rr.Code != http.StatusOK || o.Status != discover.StatusUpstreamUnavailable {
+		t.Errorf("options: HTTP %d %+v", rr.Code, o)
+	}
+}
+
 func TestRateLimiterRoutesDiscoverSeparately(t *testing.T) {
 	rl := NewRateLimiter(60, map[string]int{"discover": 5, "api": 100, "default": 600})
-	for _, p := range []string{"/api/discover/popular", "/api/discover/similar"} {
+	for _, p := range []string{"/api/discover/popular", "/api/discover/similar", "/api/discover/options", "/api/discover/browse"} {
 		if got := rl.ruleForPath(p); got != "discover" {
 			t.Errorf("ruleForPath(%q) = %q, want discover", p, got)
 		}

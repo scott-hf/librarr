@@ -1,0 +1,14 @@
+{
+  "status": "ok",
+  "error": "",
+  "catalogs": [
+    { "id": "popular", "label": "Popular" },
+    { "id": "new", "label": "New" },
+    { "id": "top_rated", "label": "Top rated" }
+  ],
+  "genres": [
+    { "id": "fantasy", "label": "Fantasy" },
+    { "id": "science fiction", "label": "Science fiction" },
+    { "id": "children's", "label": "Children's" }
+  ]
+}

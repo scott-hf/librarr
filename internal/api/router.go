@@ -286,6 +286,8 @@ func (s *Server) registerSearchRoutes() {
 	// Discover shelves (Open Library backed).
 	s.mux.HandleFunc("GET /api/discover/popular", s.handleDiscoverPopular)
 	s.mux.HandleFunc("GET /api/discover/similar", s.handleDiscoverSimilar)
+	s.mux.HandleFunc("GET /api/discover/options", s.handleDiscoverOptions)
+	s.mux.HandleFunc("GET /api/discover/browse", s.handleDiscoverBrowse)
 }
 
 // registerDownloadRoutes wires download management and file uploads.
