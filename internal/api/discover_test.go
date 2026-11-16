@@ -229,7 +229,7 @@ func TestDiscoverBrowseHandler(t *testing.T) {
 		t.Errorf("paging wrong: next=%v partial=%v items=%d", res.NextOffset, res.Partial, len(res.Items))
 	}
 	q := (*queries)[0]
-	if !strings.Contains(q.Get("q"), `subject:"science fiction"`) || q.Get("sort") != "readinglog" || q.Get("offset") != "20" {
+	if !strings.Contains(q.Get("q"), `subject_key:"science_fiction"`) || q.Get("sort") != "readinglog" || q.Get("offset") != "20" {
 		t.Errorf("OL query %v", q)
 	}
 }

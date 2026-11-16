@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"strconv"
+	"strings"
 	"time"
 	"unicode"
 )
@@ -181,6 +183,9 @@ func (c *Client) Browse(ctx context.Context, catalog, genre string, offset int) 
 			return echo(browseFailure(StatusInvalidRequest, "Unknown genre"))
 		}
 		subject = tokens[0]
+		if subjectKey(subject) == "" {
+			return echo(browseFailure(StatusInvalidRequest, "Unknown genre"))
+		}
 	}
 	year := 0
 	if catalog == CatalogNew {
@@ -200,15 +205,44 @@ func (c *Client) Browse(ctx context.Context, catalog, genre string, offset int) 
 	return echo(res)
 }
 
+// subjectKey turns a normalized genre token into the Open Library
+// `subject_key` slug: lowercase, every run of space, comma or underscore
+// becomes one underscore, outer underscores trimmed. Apostrophes and hyphens
+// are kept ("children's", "self-help"), which is how Open Library stores them.
+func subjectKey(subject string) string {
+	k := strings.Trim(subjectKeySep.ReplaceAllString(strings.ToLower(subject), "_"), "_")
+	if o, ok := subjectKeyOverrides[k]; ok {
+		return o
+	}
+	return k
+}
+
+var subjectKeySep = regexp.MustCompile(`[ ,_]+`)
+
+// subjectKeyOverrides maps a genre slug whose exact Open Library key is almost
+// empty to the key where its books actually live (WI-1760 probe, 2026-11-16:
+// subject_key:children's has 453 works and 1 new work; children's_fiction has
+// 275k and 207 new).
+var subjectKeyOverrides = map[string]string{
+	"children's": "children's_fiction",
+}
+
+// subjectClause is the exact-subject constraint for one genre. The phrase
+// field `subject` also matches publisher category strings ("Science Fiction,
+// Fantasy, & Magic"), so browse uses the normalized `subject_key` instead.
+// subject is a single token without quotes or backslashes (Browse rejects
+// those), so quoting the slug in the q string is injection-safe.
+func subjectClause(subject string) string {
+	return fmt.Sprintf(`subject_key:"%s"`, subjectKey(subject))
+}
+
 // browseParams builds the Open Library search for one catalog page.
-// subject is a single normalized token without quotes or backslashes (Browse
-// rejects those), so quoting it in the q string is injection-safe.
 func browseParams(catalog, subject string, offset, year int) olParams {
 	p := olParams{offset: offset, sendOffset: true}
 	switch catalog {
 	case CatalogPopular:
 		if subject != "" {
-			p.field, p.value = "subject", subject
+			p.q = subjectClause(subject)
 		} else {
 			p.q = "language:eng"
 		}
@@ -216,14 +250,14 @@ func browseParams(catalog, subject string, offset, year int) olParams {
 	case CatalogNew:
 		cond := fmt.Sprintf("first_publish_year:[%d TO %d] cover_i:[1 TO *]", year-1, year)
 		if subject != "" {
-			p.q = fmt.Sprintf(`subject:"%s" %s`, subject, cond)
+			p.q = fmt.Sprintf(`%s %s`, subjectClause(subject), cond)
 		} else {
 			p.q = cond
 		}
 		p.sort = "readinglog"
 	case CatalogTopRated:
 		if subject != "" {
-			p.q = fmt.Sprintf(`subject:"%s" ratings_count:[%d TO *]`, subject, topRatedMinCountGenre)
+			p.q = fmt.Sprintf(`%s ratings_count:[%d TO *]`, subjectClause(subject), topRatedMinCountGenre)
 		} else {
 			p.q = fmt.Sprintf("ratings_count:[%d TO *]", topRatedMinCountAll)
 		}
