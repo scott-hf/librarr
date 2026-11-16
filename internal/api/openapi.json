@@ -33,6 +33,29 @@
           "error":   {"type": "string"}
         }
       },
+      "DiscoverResponse": {
+        "type": "object",
+        "required": ["status", "error", "resolved_subject", "items"],
+        "properties": {
+          "status":           {"type": "string", "enum": ["ok", "empty", "upstream_unavailable", "rate_limited", "invalid_request"]},
+          "error":            {"type": "string", "description": "Human-readable reason when status is not ok; empty otherwise."},
+          "resolved_subject": {"type": "string", "description": "Open Library subject actually used (popular, or the genre top-up of similar); empty when none."},
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "key":        {"type": "string", "description": "Open Library work key, e.g. /works/OL45804W."},
+                "title":      {"type": "string"},
+                "author":     {"type": "string"},
+                "cover_url":  {"type": "string"},
+                "year":       {"type": "integer", "description": "First publish year; 0 when unknown."},
+                "popularity": {"type": "integer", "description": "Open Library reading-log count."}
+              }
+            }
+          }
+        }
+      },
       "SearchResult": {
         "type": "object",
         "description": "A single search hit. Fields are populated per driver — direct-download drivers omit seeders/leechers; torrent drivers usually omit MD5.",
@@ -147,6 +170,40 @@
       "get": {
         "summary": "Search manga",
         "parameters": [{"name": "q", "in": "query", "required": true, "schema": {"type": "string"}}]
+      }
+    },
+    "/api/discover/popular": {
+      "get": {
+        "summary": "Most-read books for a genre (Open Library, sorted by reading-log popularity)",
+        "description": "Open Library failures are reported in the body's status field with HTTP 200; only auth/transport failures are HTTP errors. Inputs are trimmed, whitespace-collapsed and capped at 200 characters. Results are cached for 30 minutes.",
+        "parameters": [
+          {"name": "genre", "in": "query", "required": true,  "schema": {"type": "string"}, "description": "Genre as reported by Audiobookshelf, e.g. \"Science Fiction & Fantasy\"."},
+          {"name": "limit", "in": "query", "required": false, "schema": {"type": "integer", "minimum": 1, "maximum": 20, "default": 20}}
+        ],
+        "responses": {
+          "200": {
+            "description": "Shelf items",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/DiscoverResponse"}}}
+          }
+        }
+      }
+    },
+    "/api/discover/similar": {
+      "get": {
+        "summary": "Books related to a seed book (author's most-read books, topped up from the genre)",
+        "description": "The seed title is excluded from the items. Same status/HTTP conventions as /api/discover/popular.",
+        "parameters": [
+          {"name": "title",  "in": "query", "required": true,  "schema": {"type": "string"}},
+          {"name": "author", "in": "query", "required": false, "schema": {"type": "string"}},
+          {"name": "genre",  "in": "query", "required": false, "schema": {"type": "string"}, "description": "Used to top up when the author has few books."},
+          {"name": "limit",  "in": "query", "required": false, "schema": {"type": "integer", "minimum": 1, "maximum": 20, "default": 20}}
+        ],
+        "responses": {
+          "200": {
+            "description": "Shelf items",
+            "content": {"application/json": {"schema": {"$ref": "#/components/schemas/DiscoverResponse"}}}
+          }
+        }
       }
     },
 

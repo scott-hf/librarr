@@ -90,6 +90,11 @@ type Config struct {
 	AuthPassword string
 	APIKey       string
 
+	// OpenLibraryContact is the contact address put in the User-Agent of
+	// Open Library requests (discover shelves), as Open Library asks of
+	// API consumers.
+	OpenLibraryContact string
+
 	// Komga
 	KomgaURL         string
 	KomgaUser        string
@@ -293,6 +298,8 @@ func buildFromEnv() *Config {
 		Port:           getEnvInt("LIBRARR_PORT", 5050),
 		DBPath:         dbPath,
 		TrustedProxies: splitCSV(getEnv("LIBRARR_TRUSTED_PROXIES", "")),
+
+		OpenLibraryContact: getEnv("LIBRARR_OPENLIBRARY_CONTACT", ""),
 
 		QBUrl:               getEnv("QB_URL", ""),
 		QBUser:              getEnv("QB_USER", "admin"),

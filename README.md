@@ -464,6 +464,14 @@ Legacy per-source env vars (e.g. `PROWLARR_URL` and other per-driver overrides) 
 | GET | `/api/search?q=` | Search ebooks across all sources |
 | GET | `/api/search/audiobooks?q=` | Search audiobooks |
 | GET | `/api/search/manga?q=` | Search manga |
+| GET | `/api/discover/popular?genre=&limit=` | Most-read books for a genre (Open Library) |
+| GET | `/api/discover/similar?title=&author=&genre=&limit=` | Books related to a seed book (Open Library) |
+
+The discover endpoints return `{status, error, resolved_subject, items[]}` where
+`status` is `ok`, `empty`, `upstream_unavailable`, `rate_limited` or
+`invalid_request`; Open Library failures are always HTTP 200 with a non-`ok`
+status. Set `LIBRARR_OPENLIBRARY_CONTACT` to a contact email so Open Library can
+identify the operator in the request User-Agent.
 
 Every result carries `in_library` (always present), plus `library_item_id` and
 `library_title` when the book is already in your library.
