@@ -45,7 +45,7 @@ func TestHandleOpenAPI(t *testing.T) {
 		t.Errorf("expected at least 50 documented paths, got %d", len(spec.Paths))
 	}
 	// Spot-check the major endpoints every AI agent will care about exist.
-	for _, p := range []string{"/api/health", "/api/search", "/api/library", "/api/wishlist", "/torznab/api"} {
+	for _, p := range []string{"/api/health", "/api/search", "/api/library", "/api/wishlist", "/torznab/api", "/api/discover/popular", "/api/discover/similar"} {
 		if _, ok := spec.Paths[p]; !ok {
 			t.Errorf("expected path %q in spec", p)
 		}

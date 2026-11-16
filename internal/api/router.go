@@ -13,6 +13,7 @@ import (
 
 	"github.com/JeremiahM37/librarr/internal/config"
 	"github.com/JeremiahM37/librarr/internal/db"
+	"github.com/JeremiahM37/librarr/internal/discover"
 	"github.com/JeremiahM37/librarr/internal/download"
 	"github.com/JeremiahM37/librarr/internal/metadata"
 	"github.com/JeremiahM37/librarr/internal/organize"
@@ -41,6 +42,7 @@ type Server struct {
 	rateLimiter    *RateLimiter
 	oidc           *OIDCHandler
 	metadataClient *metadata.Client
+	discoverClient *discover.Client
 	organizer      *organize.Organizer
 	targets        *organize.LibraryTargets
 	webhookSender  *webhook.Sender
@@ -113,6 +115,7 @@ func NewServer(cfg *config.Config, database *db.DB, searchMgr *search.Manager, d
 		sessions:       sessions,
 		metrics:        NewMetricsCollector(),
 		metadataClient: metadata.NewClient(&http.Client{Timeout: 15 * time.Second}),
+		discoverClient: discover.New(&http.Client{Timeout: 15 * time.Second}, cfg.OpenLibraryContact),
 		organizer:      organizer,
 		targets:        targets,
 		webhookSender:  ws,
@@ -130,6 +133,7 @@ func NewServer(cfg *config.Config, database *db.DB, searchMgr *search.Manager, d
 		s.rateLimiter = NewRateLimiter(60, map[string]int{
 			"login":    20,
 			"search":   120,
+			"discover": 60,
 			"download": 60,
 			"api":      300,
 			"default":  600,
@@ -278,6 +282,10 @@ func (s *Server) registerSearchRoutes() {
 	s.mux.HandleFunc("GET /api/search/stream", s.handleSearchStream)
 	s.mux.HandleFunc("GET /api/search/audiobooks/stream", s.handleSearchAudiobooksStream)
 	s.mux.HandleFunc("GET /api/search/manga/stream", s.handleSearchMangaStream)
+
+	// Discover shelves (Open Library backed).
+	s.mux.HandleFunc("GET /api/discover/popular", s.handleDiscoverPopular)
+	s.mux.HandleFunc("GET /api/discover/similar", s.handleDiscoverSimilar)
 }
 
 // registerDownloadRoutes wires download management and file uploads.
