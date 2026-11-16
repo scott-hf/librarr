@@ -293,7 +293,7 @@ func (c *Client) computeBrowse(ctx context.Context, catalog, subject string, off
 		return browseFailure(r.Status, r.Error), failureTTL
 	}
 
-	res := BrowseResult{Status: StatusOK, Partial: partial, Items: toItems(resp.Docs, nil)}
+	res := BrowseResult{Status: StatusOK, Partial: partial, Items: toItems(onSubject(resp.Docs, subject), nil)}
 	if !partial && len(resp.Docs) > 0 && offset+len(resp.Docs) < resp.NumFound && offset+BrowsePageSize <= BrowseMaxOffset {
 		next := offset + BrowsePageSize
 		res.NextOffset = &next
