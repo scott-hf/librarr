@@ -405,6 +405,39 @@ type olDoc struct {
 	FirstPublishYear int      `json:"first_publish_year"`
 	CoverI           int      `json:"cover_i"`
 	ReadingLogCount  int      `json:"readinglog_count"`
+	SubjectKey       []string `json:"subject_key"`
+}
+
+// onSubject drops docs whose only claim to subject is a bare, loose tag. Open
+// Library stores a bare `science_fiction` key on epic fantasy (A Game of
+// Thrones, The Eye of the World) and on YA romance (Shatter Me) alongside a
+// readinglog count big enough to top the sci-fi Popular list; real sci-fi
+// carries a second, corroborating key (`fiction_science_fiction_general`,
+// `dystopian_fiction`, `american_science_fiction`...). Docs with no
+// subject_key data pass, and subjects without a rule are returned untouched.
+func onSubject(docs []olDoc, subject string) []olDoc {
+	if subjectKey(subject) != "science_fiction" {
+		return docs
+	}
+	kept := make([]olDoc, 0, len(docs))
+	for _, d := range docs {
+		if len(d.SubjectKey) == 0 || corroboratesScienceFiction(d.SubjectKey) {
+			kept = append(kept, d)
+		}
+	}
+	return kept
+}
+
+func corroboratesScienceFiction(keys []string) bool {
+	for _, k := range keys {
+		if k == "science_fiction" {
+			continue
+		}
+		if strings.Contains(k, "science_fiction") || strings.Contains(k, "science-fiction") || strings.Contains(k, "dystop") {
+			return true
+		}
+	}
+	return false
 }
 
 type olResponse struct {
@@ -440,7 +473,7 @@ func (c *Client) query(ctx context.Context, p olParams) (*olResponse, error) {
 	}
 	q.Set("language", "eng")
 	q.Set("limit", strconv.Itoa(olFetchLimit))
-	q.Set("fields", "key,title,author_name,first_publish_year,cover_i,readinglog_count")
+	q.Set("fields", "key,title,author_name,first_publish_year,cover_i,readinglog_count,subject_key")
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/search.json?"+q.Encode(), nil)
 	if err != nil {
 		return nil, err
@@ -563,7 +596,7 @@ func (c *Client) computePopular(ctx context.Context, tokens []string) (Result, t
 			slog.Warn("discover popular failed", "subject", tok, "err", err)
 			return errResult(err), failureTTL
 		}
-		items := toItems(docs, nil)
+		items := toItems(onSubject(docs, tok), nil)
 		if len(items) > len(best) {
 			best, bestSubject = items, tok
 		}

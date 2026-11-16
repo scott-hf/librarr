@@ -21,7 +21,7 @@ func browse(c *Client, catalog, genre string, offset int) BrowseResult {
 }
 
 func TestBrowseSendsExactOpenLibraryQueryPerCatalog(t *testing.T) {
-	const fields = "key,title,author_name,first_publish_year,cover_i,readinglog_count"
+	const fields = "key,title,author_name,first_publish_year,cover_i,readinglog_count,subject_key"
 	for _, tc := range []struct {
 		name, catalog, genre string
 		offset               int
