@@ -29,19 +29,28 @@ func TestBrowseSendsExactOpenLibraryQueryPerCatalog(t *testing.T) {
 		absent               []string
 	}{
 		{"popular genre", CatalogPopular, "Science Fiction", 20,
-			map[string]string{"subject": "science fiction", "sort": "readinglog", "offset": "20", "language": "eng", "limit": "20", "fields": fields},
-			[]string{"q"}},
+			map[string]string{"q": `subject_key:"science_fiction"`, "sort": "readinglog", "offset": "20", "language": "eng", "limit": "20", "fields": fields},
+			[]string{"subject"}},
+		{"popular apostrophe genre", CatalogPopular, "children's", 0,
+			map[string]string{"q": `subject_key:"children's_fiction"`, "sort": "readinglog", "offset": "0", "language": "eng", "limit": "20"},
+			[]string{"subject"}},
+		{"popular hyphen genre", CatalogPopular, "self-help", 0,
+			map[string]string{"q": `subject_key:"self-help"`, "sort": "readinglog", "offset": "0", "language": "eng", "limit": "20"},
+			[]string{"subject"}},
+		{"popular multiword genre", CatalogPopular, "historical fiction", 0,
+			map[string]string{"q": `subject_key:"historical_fiction"`, "sort": "readinglog", "offset": "0", "language": "eng", "limit": "20"},
+			[]string{"subject"}},
 		{"popular all genres", CatalogPopular, "", 0,
 			map[string]string{"q": "language:eng", "sort": "readinglog", "offset": "0", "language": "eng", "limit": "20", "fields": fields},
 			[]string{"subject"}},
 		{"new genre", CatalogNew, "fantasy", 40,
-			map[string]string{"q": `subject:"fantasy" first_publish_year:[2025 TO 2026] cover_i:[1 TO *]`, "sort": "readinglog", "offset": "40", "language": "eng", "limit": "20", "fields": fields},
+			map[string]string{"q": `subject_key:"fantasy" first_publish_year:[2025 TO 2026] cover_i:[1 TO *]`, "sort": "readinglog", "offset": "40", "language": "eng", "limit": "20", "fields": fields},
 			[]string{"subject"}},
 		{"new all genres", CatalogNew, "", 0,
 			map[string]string{"q": "first_publish_year:[2025 TO 2026] cover_i:[1 TO *]", "sort": "readinglog", "offset": "0", "language": "eng", "limit": "20"},
 			[]string{"subject"}},
 		{"top_rated genre", CatalogTopRated, "children's", 0,
-			map[string]string{"q": `subject:"children's" ratings_count:[50 TO *]`, "sort": "rating", "offset": "0", "language": "eng", "limit": "20"},
+			map[string]string{"q": `subject_key:"children's_fiction" ratings_count:[50 TO *]`, "sort": "rating", "offset": "0", "language": "eng", "limit": "20"},
 			[]string{"subject"}},
 		{"top_rated all genres", CatalogTopRated, "", 180,
 			map[string]string{"q": "ratings_count:[100 TO *]", "sort": "rating", "offset": "180", "language": "eng", "limit": "20"},
@@ -206,7 +215,7 @@ func TestBrowsePopularPageZeroFallsBackUnsortedAsPartial(t *testing.T) {
 	if res.Status != StatusOK || !res.Partial || res.NextOffset != nil || len(res.Items) != 20 {
 		t.Fatalf("fallback: %+v", res)
 	}
-	if f.hits() != 2 || f.query(1).Get("sort") != "" || f.query(1).Get("subject") != "fantasy" {
+	if f.hits() != 2 || f.query(1).Get("sort") != "" || f.query(1).Get("q") != `subject_key:"fantasy"` || f.query(1).Get("subject") != "" {
 		t.Errorf("hits=%d retry query=%v", f.hits(), f.query(1))
 	}
 	// A degraded page is cached only briefly so the sorted answer is retried.
@@ -278,8 +287,8 @@ func TestBrowseNormalizesRawABSGenre(t *testing.T) {
 	f := newFakeOL(t, browseOK("N"))
 	c, _ := newTestClient(f)
 	res := browse(c, CatalogPopular, "Science Fiction & Fantasy", 0)
-	if res.Status != StatusOK || f.query(0).Get("subject") != "science fiction" {
-		t.Errorf("first token: status=%s subject=%q", res.Status, f.query(0).Get("subject"))
+	if res.Status != StatusOK || f.query(0).Get("q") != `subject_key:"science_fiction"` {
+		t.Errorf("first token: status=%s q=%q", res.Status, f.query(0).Get("q"))
 	}
 	// Echo is the request, not the resolved subject, so the client can match it.
 	if res.Genre != "Science Fiction & Fantasy" {
@@ -288,8 +297,28 @@ func TestBrowseNormalizesRawABSGenre(t *testing.T) {
 	f2 := newFakeOL(t, browseOK("N"))
 	c2, _ := newTestClient(f2)
 	browse(c2, CatalogNew, "Sci-Fi", 0)
-	if !strings.Contains(f2.query(0).Get("q"), `subject:"science fiction"`) {
+	if !strings.Contains(f2.query(0).Get("q"), `subject_key:"science_fiction"`) {
 		t.Errorf("alias not applied: %q", f2.query(0).Get("q"))
+	}
+}
+
+func TestSubjectKeySlug(t *testing.T) {
+	for in, want := range map[string]string{
+		"science fiction":    "science_fiction",
+		"Science  Fiction":   "science_fiction",
+		"children's":         "children's_fiction",
+		"Children's":         "children's_fiction",
+		"self-help":          "self-help",
+		"historical fiction": "historical_fiction",
+		"young adult":        "young_adult",
+		"mystery, thriller":  "mystery_thriller",
+		" _fantasy_ ":        "fantasy",
+		"":                   "",
+		"_ ,":                "",
+	} {
+		if got := subjectKey(in); got != want {
+			t.Errorf("subjectKey(%q) = %q, want %q", in, got, want)
+		}
 	}
 }
 
