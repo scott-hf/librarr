@@ -65,7 +65,7 @@ func (s *Server) handleLibraryAudiobooks(w http.ResponseWriter, r *http.Request)
 	}
 
 	page := queryInt(r, "page", 1)
-	query := r.URL.Query().Get("q")
+	query := sanitizeSearchQuery(r.URL.Query().Get("q"))
 	limit := 100
 
 	libraryID := s.cfg.ABSLibraryID
@@ -192,7 +192,7 @@ func (s *Server) handleLibraryManga(w http.ResponseWriter, r *http.Request) {
 	}
 
 	page := queryInt(r, "page", 1)
-	query := r.URL.Query().Get("q")
+	query := sanitizeSearchQuery(r.URL.Query().Get("q"))
 
 	// Step 1: Login to Kavita to get JWT.
 	token, err := s.kavitaLogin()

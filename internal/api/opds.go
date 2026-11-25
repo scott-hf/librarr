@@ -172,7 +172,7 @@ func (s *Server) handleOPDSBooks(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleOPDSSearch(w http.ResponseWriter, r *http.Request) {
-	query := r.URL.Query().Get("q")
+	query := sanitizeSearchQuery(r.URL.Query().Get("q"))
 	if query == "" {
 		s.handleOPDSRoot(w, r)
 		return

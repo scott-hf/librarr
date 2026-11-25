@@ -66,6 +66,51 @@ func TestAudioBookBaySearchSetsBrowserHeaders(t *testing.T) {
 	}
 }
 
+// AudioBookBay 301s any search term that begins with an uppercase letter to its
+// home page, which the client follows silently into an empty-looking result.
+// The stub in the other tests returns the same HTML whatever was asked, so this
+// test captures the outgoing request and asserts on what `s=` actually held.
+func TestAudioBookBaySearchSendsTrimmedLowercaseTerm(t *testing.T) {
+	cases := []struct {
+		name  string
+		query string
+		want  string
+	}{
+		{"mixed case with padding", "  ToLkIeN  ", "tolkien"},
+		{"leading uppercase", "Dune", "dune"},
+		{"already lowercase", "dune", "dune"},
+		{"tabs and newlines", "\tThe Martian\n", "the martian"},
+		{"inner spacing preserved", "The  Martian", "the  martian"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rt := &abbRoundTripper{body: `<html><body></body></html>`}
+			reg, err := sourcestest.Registry()
+			if err != nil {
+				t.Fatalf("load registry: %v", err)
+			}
+			cfg := &config.Config{UserAgent: "test", Sources: reg}
+			cfg.Sources.AudioBookBay.Mirrors = []string{"audiobookbay.lu"}
+			a := &AudioBookBay{cfg: cfg, client: &http.Client{Transport: rt}}
+
+			if _, err := a.searchDomain(context.Background(), "audiobookbay.lu", tc.query); err != nil {
+				t.Fatalf("searchDomain returned error: %v", err)
+			}
+			if rt.req == nil {
+				t.Fatal("no request was captured")
+			}
+			params := rt.req.URL.Query()
+			if got := params.Get("s"); got != tc.want {
+				t.Fatalf("s = %q, want %q", got, tc.want)
+			}
+			if got := params.Get("tt"); got != "1" {
+				t.Fatalf("tt = %q, want 1", got)
+			}
+		})
+	}
+}
+
 // Live AudioBookBay markup puts the keyword span immediately after the
 // language with no separating whitespace, so .postInfo text reads
 // "Language: EnglishKeywords: ...". The language gate must still accept it.

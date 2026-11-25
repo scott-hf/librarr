@@ -57,7 +57,10 @@ func (a *AudioBookBay) searchDomain(ctx context.Context, domain, query string) (
 	}
 
 	q := req.URL.Query()
-	q.Set("s", query)
+	// Lowercase is required: audiobookbay answers a search term starting with an
+	// uppercase letter with 301 -> home page, which the client follows to a
+	// 200, so it surfaces as an empty result rather than an error.
+	q.Set("s", strings.ToLower(strings.TrimSpace(query)))
 	q.Set("tt", "1")
 	req.URL.RawQuery = q.Encode()
 	setABBRequestHeaders(req)
