@@ -10,6 +10,27 @@ import (
 
 // startTime is declared in health.go
 
+// sourceStatus derives a dashboard status from one SourceMeta entry.
+//
+// The health map is search.HealthTracker.Snapshot's output, which publishes
+// `circuit_open` as a BOOL. This used to look for a "state" key equal to
+// "open", which Snapshot has never emitted, so the assertion always failed and
+// the dashboard reported every source as "ok" -- including a source whose
+// circuit was open and which was therefore answering nothing at all. Keep this
+// keyed to what Snapshot actually publishes.
+func sourceStatus(src map[string]interface{}) string {
+	health, ok := src["health"].(map[string]interface{})
+	if !ok {
+		// No health entry yet: the source has neither succeeded nor failed
+		// since start, so there is nothing to report as degraded.
+		return "ok"
+	}
+	if open, ok := health["circuit_open"].(bool); ok && open {
+		return "degraded"
+	}
+	return "ok"
+}
+
 func (s *Server) handleAdminDashboard(w http.ResponseWriter, _ *http.Request) {
 	// Library stats.
 	ebookCount, _ := s.db.CountItems("ebook")
@@ -36,16 +57,10 @@ func (s *Server) handleAdminDashboard(w http.ResponseWriter, _ *http.Request) {
 		if enabled, ok := src["enabled"].(bool); ok && enabled {
 			enabledCount++
 		}
-		status := "ok"
-		if health, ok := src["health"].(map[string]interface{}); ok {
-			if state, ok := health["state"].(string); ok && state == "open" {
-				status = "degraded"
-			}
-		}
 		sourcesHealth = append(sourcesHealth, map[string]interface{}{
 			"name":   src["name"],
 			"label":  src["label"],
-			"status": status,
+			"status": sourceStatus(src),
 		})
 	}
 
