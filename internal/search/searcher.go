@@ -5,6 +5,8 @@ package search
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
 	"regexp"
 	"strings"
@@ -28,11 +30,20 @@ type Searcher interface {
 	DownloadType() string
 }
 
+// DefaultSourceTimeout caps how long any single source may take per search, so
+// one dead upstream cannot set the latency floor for every search. Measured
+// healthy audiobook sources answer in well under 2s (AudioBookBay ~0.8s, Open
+// Library 0.15-1.4s); 6s leaves roughly 4x headroom over the slowest of those
+// while staying under the gateway's 10s search budget. The per-source context
+// is derived from the caller's, so any shorter overall deadline still wins.
+const DefaultSourceTimeout = 6 * time.Second
+
 // Manager coordinates searches across multiple sources with circuit breaker support.
 type Manager struct {
-	cfg     *config.Config
-	sources []Searcher
-	health  *HealthTracker
+	cfg           *config.Config
+	sources       []Searcher
+	health        *HealthTracker
+	sourceTimeout time.Duration
 
 	filterMu          sync.RWMutex
 	foreignLangFilter bool // runtime-configurable via UI; initialised from config
@@ -54,8 +65,67 @@ func NewManager(cfg *config.Config, sources []Searcher, health *HealthTracker) *
 		cfg:               cfg,
 		sources:           sources,
 		health:            health,
+		sourceTimeout:     DefaultSourceTimeout,
 		foreignLangFilter: cfg.ForeignLangFilter,
 	}
+}
+
+// searchSource runs one source under its own deadline, derived from ctx so the
+// caller's overall deadline still applies. It returns when the source does, or
+// when the deadline passes, whichever is first -- a source that ignores its
+// context cannot hold the search open. A source that swallows a deadline and
+// returns no results and no error (as Librivox once did) is reported as a
+// timeout instead of as an empty success.
+func (m *Manager) searchSource(ctx context.Context, src Searcher, query string) sourceOutcome {
+	start := time.Now()
+	searchCtx, cancel := context.WithTimeout(ctx, m.sourceTimeout)
+	defer cancel()
+
+	ch := make(chan sourceOutcome, 1) // buffered: an abandoned source can still finish and exit
+	go func() {
+		res, err := src.Search(searchCtx, query)
+		ch <- sourceOutcome{results: res, err: err}
+	}()
+
+	var out sourceOutcome
+	select {
+	case out = <-ch:
+	case <-searchCtx.Done():
+		out.err = searchCtx.Err()
+	}
+
+	if out.err == nil && len(out.results) == 0 && errors.Is(searchCtx.Err(), context.DeadlineExceeded) {
+		out.err = searchCtx.Err()
+	}
+	if errors.Is(out.err, context.DeadlineExceeded) && ctx.Err() == nil {
+		out.err = fmt.Errorf("source timed out after %s: %w", m.sourceTimeout, context.DeadlineExceeded)
+	}
+	out.elapsed = time.Since(start)
+	return out
+}
+
+// sourceOutcome is what one source produced under searchSource.
+type sourceOutcome struct {
+	results []models.SearchResult
+	err     error
+	elapsed time.Duration
+}
+
+// reportSourceFailure logs and records a failed source search, one line per
+// failed source per search. It returns false, logging nothing but a debug line,
+// when the failure is just the caller having gone away.
+func (m *Manager) reportSourceFailure(ctx context.Context, src Searcher, err error, elapsed time.Duration) bool {
+	if ctx.Err() != nil {
+		slog.Debug("search canceled by client", "source", src.Name())
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		slog.Warn("source search timed out", "source", src.Name(), "error", err, "elapsed_ms", elapsed.Milliseconds())
+	} else {
+		slog.Error("search failed", "source", src.Name(), "error", err, "elapsed_ms", elapsed.Milliseconds())
+	}
+	m.health.RecordFailure(src.Name(), err.Error(), "search")
+	return true
 }
 
 // SetForeignLangFilter updates the foreign-language filter at runtime.
@@ -100,19 +170,12 @@ func (m *Manager) SearchWithAuthor(ctx context.Context, tab, query, author strin
 		go func(src Searcher) {
 			defer wg.Done()
 
-			searchCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-			defer cancel()
-
-			res, err := src.Search(searchCtx, query)
-			if err != nil {
-				if ctx.Err() != nil {
-					slog.Debug("search canceled by client", "source", src.Name())
-					return
-				}
-				slog.Error("search failed", "source", src.Name(), "error", err)
-				m.health.RecordFailure(src.Name(), err.Error(), "search")
+			out := m.searchSource(ctx, src, query)
+			if out.err != nil {
+				m.reportSourceFailure(ctx, src, out.err, out.elapsed)
 				return
 			}
+			res := out.results
 
 			m.health.RecordSuccess(src.Name(), "search")
 
@@ -175,25 +238,19 @@ func (m *Manager) SearchStream(ctx context.Context, tab, query, author string) <
 			go func(src Searcher) {
 				defer wg.Done()
 
-				searchCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-				defer cancel()
-
-				res, err := src.Search(searchCtx, query)
-				if err != nil {
-					if ctx.Err() != nil {
-						slog.Debug("search canceled by client", "source", src.Name())
-						return
+				out := m.searchSource(ctx, src, query)
+				if out.err != nil {
+					if m.reportSourceFailure(ctx, src, out.err, out.elapsed) {
+						sendUpdate(SourceSearchUpdate{
+							Source:       src.Name(),
+							Err:          out.err,
+							Done:         true,
+							ElapsedMilli: time.Since(start).Milliseconds(),
+						})
 					}
-					slog.Error("search failed", "source", src.Name(), "error", err)
-					m.health.RecordFailure(src.Name(), err.Error(), "search")
-					sendUpdate(SourceSearchUpdate{
-						Source:       src.Name(),
-						Err:          err,
-						Done:         true,
-						ElapsedMilli: time.Since(start).Milliseconds(),
-					})
 					return
 				}
+				res := out.results
 
 				m.health.RecordSuccess(src.Name(), "search")
 				for i := range res {
