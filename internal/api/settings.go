@@ -47,6 +47,7 @@ func (s *Server) handleGetSettings(w http.ResponseWriter, _ *http.Request) {
 		"metrics_enabled":             s.cfg.MetricsEnabled,
 		"webnovel_enabled":            s.cfg.WebNovelEnabled,
 		"mangadex_enabled":            s.cfg.MangaDexEnabled,
+		"librivox_enabled":            s.cfg.LibrivoxEnabled,
 		"max_retries":                 s.cfg.MaxRetries,
 		"foreign_lang_filter":         s.searchMgr.ForeignLangFilterEnabled(),
 		"flibusta_enabled":            s.cfg.FlibustaEnabled,

@@ -154,6 +154,9 @@ type Config struct {
 	MetricsEnabled   bool
 	WebNovelEnabled  bool
 	MangaDexEnabled  bool
+	// LibrivoxEnabled is a kill switch for the Librivox audiobook source (default
+	// true). Turn it off when the upstream is down so it cannot slow searches.
+	LibrivoxEnabled bool
 
 	// lightnovel-crawler container name (for docker exec)
 	LNCrawlContainer string
@@ -377,6 +380,7 @@ func buildFromEnv() *Config {
 		MetricsEnabled:   getEnvBool("METRICS_ENABLED", true),
 		WebNovelEnabled:  getEnvBool("WEBNOVEL_ENABLED", true),
 		MangaDexEnabled:  getEnvBool("MANGADEX_ENABLED", true),
+		LibrivoxEnabled:  getEnvBool("LIBRARR_LIBRIVOX_ENABLED", true),
 
 		FlibustaURL:     getEnv("FLIBUSTA_URL", ""),
 		FlibustaEnabled: getEnvBool("FLIBUSTA_ENABLED", false),
@@ -643,6 +647,7 @@ func (c *Config) applySettingsFileOverrides() {
 		"metrics_enabled":             &c.MetricsEnabled,
 		"webnovel_enabled":            &c.WebNovelEnabled,
 		"mangadex_enabled":            &c.MangaDexEnabled,
+		"librivox_enabled":            &c.LibrivoxEnabled,
 		"flibusta_enabled":            &c.FlibustaEnabled,
 		"zlibrary_enabled":            &c.ZLibraryEnabled,
 		"remove_torrent_after_import": &c.RemoveTorrentAfterImport,

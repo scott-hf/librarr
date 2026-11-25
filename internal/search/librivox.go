@@ -24,9 +24,14 @@ func NewLibrivox(cfg *config.Config, client *http.Client) *Librivox {
 
 func (l *Librivox) Name() string         { return "librivox" }
 func (l *Librivox) Label() string        { return "Librivox" }
-func (l *Librivox) Enabled() bool        { return true }
 func (l *Librivox) SearchTab() string    { return "audiobook" }
 func (l *Librivox) DownloadType() string { return "direct" }
+
+// Enabled gates Librivox the way Flibusta is gated: on its config switch
+// (LIBRARR_LIBRIVOX_ENABLED, default true) and on having an endpoint to call.
+func (l *Librivox) Enabled() bool {
+	return l.cfg.LibrivoxEnabled && l.cfg.Sources != nil && l.cfg.Sources.Librivox.URL != ""
+}
 
 type librivoxResponse struct {
 	Books []librivoxBook `json:"books"`
@@ -51,10 +56,18 @@ type librivoxAuthor struct {
 
 func (l *Librivox) Search(ctx context.Context, query string) ([]models.SearchResult, error) {
 	var results []models.SearchResult
+	// answered is true once any request got a usable response. lastErr keeps the
+	// most recent failure so a source that never answers is reported as failed
+	// (visible in the log and to the circuit breaker) instead of as "no results".
+	var (
+		answered bool
+		lastErr  error
+	)
 
 	for _, field := range []string{"title", "author"} {
 		req, err := http.NewRequestWithContext(ctx, "GET", l.cfg.Sources.Librivox.URL, nil)
 		if err != nil {
+			lastErr = err
 			continue
 		}
 
@@ -69,18 +82,25 @@ func (l *Librivox) Search(ctx context.Context, query string) ([]models.SearchRes
 
 		resp, err := l.client.Do(req)
 		if err != nil {
+			lastErr = err
 			continue
 		}
 
 		if resp.StatusCode != 200 {
 			resp.Body.Close()
+			lastErr = fmt.Errorf("librivox HTTP %d", resp.StatusCode)
 			continue
 		}
 
 		var data librivoxResponse
 		err = json.NewDecoder(resp.Body).Decode(&data)
 		resp.Body.Close()
-		if err != nil || len(data.Books) == 0 {
+		if err != nil {
+			lastErr = fmt.Errorf("decode librivox response: %w", err)
+			continue
+		}
+		answered = true
+		if len(data.Books) == 0 {
 			continue
 		}
 
@@ -128,5 +148,8 @@ func (l *Librivox) Search(ctx context.Context, query string) ([]models.SearchRes
 		}
 	}
 
+	if len(results) == 0 && !answered && lastErr != nil {
+		return nil, fmt.Errorf("librivox: no request succeeded: %w", lastErr)
+	}
 	return results, nil
 }
