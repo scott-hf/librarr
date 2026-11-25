@@ -24,8 +24,22 @@ type AudioBookBay struct {
 }
 
 // NewAudioBookBay creates a new AudioBookBay searcher.
+//
+// Redirects are refused (returned, not followed). Measured 2026-11 against the
+// live mirrors: a working search (?s=tolkien) answers 200 with zero redirects,
+// while a bad one (?s=Tolkien) answers 301 -> https://audiobookbay.lu/, the
+// home page with the query dropped, which a following client reads as a
+// successful but empty search. Any redirect is therefore a "something changed
+// upstream" signal that must surface as an error; do not remove this to
+// "be tolerant". The client is a shallow copy so the shared client handed to
+// every other source keeps its default redirect policy; the Transport (and its
+// connection pool) is still shared.
 func NewAudioBookBay(cfg *config.Config, client *http.Client) *AudioBookBay {
-	return &AudioBookBay{cfg: cfg, client: client}
+	noRedirect := *client
+	noRedirect.CheckRedirect = func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
+	return &AudioBookBay{cfg: cfg, client: &noRedirect}
 }
 
 func (a *AudioBookBay) domains() []string { return a.cfg.Sources.AudioBookBay.Mirrors }
@@ -70,6 +84,12 @@ func (a *AudioBookBay) searchDomain(ctx context.Context, domain, query string) (
 		return nil, err
 	}
 	defer resp.Body.Close()
+
+	// The client from NewAudioBookBay returns 3xx responses instead of following
+	// them (see the comment there), so a redirect lands here and fails loudly.
+	if resp.StatusCode >= 300 && resp.StatusCode < 400 {
+		return nil, fmt.Errorf("AudioBookBay redirected (HTTP %d -> %s); refusing to follow", resp.StatusCode, resp.Header.Get("Location"))
+	}
 
 	if resp.StatusCode != 200 {
 		return nil, fmt.Errorf("AudioBookBay HTTP %d", resp.StatusCode)
