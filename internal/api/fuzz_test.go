@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -27,15 +28,19 @@ func FuzzQueryBoundedInt(f *testing.F) {
 	})
 }
 
-func FuzzTruncateSearchQuery(f *testing.F) {
+func FuzzSanitizeSearchQuery(f *testing.F) {
 	f.Add("")
 	f.Add("hello")
 	f.Add("作者测试")
+	f.Add("  padded \t\n")
 
 	f.Fuzz(func(t *testing.T, q string) {
-		got := truncateSearchQuery(q)
+		got := sanitizeSearchQuery(q)
 		if len([]rune(got)) > maxSearchQueryRunes {
 			t.Fatalf("truncation failed: len=%d", len([]rune(got)))
+		}
+		if got != strings.TrimSpace(got) {
+			t.Fatalf("result has surrounding whitespace: %q", got)
 		}
 	})
 }

@@ -1,16 +1,23 @@
 package api
 
-import "unicode/utf8"
+import (
+	"strings"
+	"unicode/utf8"
+)
 
 const maxSearchQueryRunes = 512
 
-// truncateSearchQuery caps search query length to prevent abuse.
-func truncateSearchQuery(q string) string {
+// sanitizeSearchQuery trims surrounding whitespace and caps search query
+// length to prevent abuse. Whitespace-only input yields "" so callers'
+// empty-query guards fire. Truncation can leave a trailing space, hence the
+// second trim.
+func sanitizeSearchQuery(q string) string {
+	q = strings.TrimSpace(q)
 	if utf8.RuneCountInString(q) <= maxSearchQueryRunes {
 		return q
 	}
 	runes := []rune(q)
-	return string(runes[:maxSearchQueryRunes])
+	return strings.TrimSpace(string(runes[:maxSearchQueryRunes]))
 }
 
 // validateMD5 checks Anna's Archive MD5 hash format.

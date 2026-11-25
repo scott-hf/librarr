@@ -21,7 +21,7 @@ func (s *Server) handleSearchManga(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleSearchTab(w http.ResponseWriter, r *http.Request, tab, activityFormat string) {
-	query := truncateSearchQuery(r.URL.Query().Get("q"))
+	query := sanitizeSearchQuery(r.URL.Query().Get("q"))
 	if query == "" {
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"results": []interface{}{},
@@ -33,7 +33,7 @@ func (s *Server) handleSearchTab(w http.ResponseWriter, r *http.Request, tab, ac
 		username, _ := r.Context().Value(ctxUsername).(string)
 		s.db.LogActivity(username, "search", query, fmt.Sprintf(activityFormat, query))
 	}
-	author := truncateSearchQuery(r.URL.Query().Get("author"))
+	author := sanitizeSearchQuery(r.URL.Query().Get("author"))
 	results, elapsed := s.searchMgr.SearchWithAuthor(r.Context(), tab, query, author)
 	if results == nil {
 		results = []models.SearchResult{}
@@ -70,7 +70,7 @@ func (s *Server) handleSearchMangaStream(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *Server) handleSearchStreamTab(w http.ResponseWriter, r *http.Request, tab, activityFormat string) {
-	query := truncateSearchQuery(r.URL.Query().Get("q"))
+	query := sanitizeSearchQuery(r.URL.Query().Get("q"))
 	if query == "" {
 		writeJSON(w, http.StatusOK, map[string]interface{}{
 			"results": []interface{}{},
@@ -93,7 +93,7 @@ func (s *Server) handleSearchStreamTab(w http.ResponseWriter, r *http.Request, t
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("X-Accel-Buffering", "no")
 
-	author := truncateSearchQuery(r.URL.Query().Get("author"))
+	author := sanitizeSearchQuery(r.URL.Query().Get("author"))
 	// Built once: the stream re-processes the whole result set on every source
 	// update, and rebuilding the index each time would rescan the library
 	// table a dozen times per search.

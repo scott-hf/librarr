@@ -134,7 +134,7 @@ func (s *Server) handleLibraryEbooksFromABS(w http.ResponseWriter, r *http.Reque
 	if page < 1 {
 		page = 1
 	}
-	query := r.URL.Query().Get("q")
+	query := sanitizeSearchQuery(r.URL.Query().Get("q"))
 	limit := queryInt(r, "limit", 100) // default 100 so series group together
 	if limit < 1 || limit > 500 {
 		limit = 100
