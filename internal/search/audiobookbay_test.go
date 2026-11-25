@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -163,6 +164,159 @@ func TestAudioBookBaySearchAcceptsLanguageRunTogetherWithKeywords(t *testing.T) 
 				t.Fatalf("got %d results, want %d", len(results), tc.want)
 			}
 		})
+	}
+}
+
+// abbRoundTripFunc lets a test script per-request behaviour (by host / query).
+type abbRoundTripFunc func(*http.Request) *http.Response
+
+func (f abbRoundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	resp := f(req)
+	resp.Request = req
+	return resp, nil
+}
+
+func abbStubResponse(status int, location, body string) *http.Response {
+	h := make(http.Header)
+	if location != "" {
+		h.Set("Location", location)
+	}
+	return &http.Response{
+		StatusCode: status,
+		Header:     h,
+		Body:       io.NopCloser(strings.NewReader(body)),
+	}
+}
+
+func abbPostPage(title string) string {
+	return `<html><body>
+	<div class="post">
+		<div class="postTitle"><h2><a href="/abss/` + strings.ToLower(strings.ReplaceAll(title, " ", "-")) + `/">` + title + `</a></h2></div>
+		<div class="postInfo">Language: English <span style="margin-left:100px;">Keywords:</span></div>
+	</div>
+	</body></html>`
+}
+
+// newRedirectTestABB builds the searcher through NewAudioBookBay (not a struct
+// literal): the redirect policy lives in the constructor, so a literal would
+// bypass exactly the code under test.
+func newRedirectTestABB(t *testing.T, shared *http.Client, mirrors ...string) *AudioBookBay {
+	t.Helper()
+	reg, err := sourcestest.Registry()
+	if err != nil {
+		t.Fatalf("load registry: %v", err)
+	}
+	cfg := &config.Config{UserAgent: "test", Sources: reg}
+	cfg.Sources.AudioBookBay.Mirrors = mirrors
+	return NewAudioBookBay(cfg, shared)
+}
+
+// AudioBookBay answers a search it dislikes with a 3xx to the home page. If the
+// client follows it, the home page's "latest posts" are scraped as if they were
+// hits. The stub reproduces that trap: any request carrying a query string is
+// redirected, and the bare home page (what a following client would land on)
+// is a valid 200 page with a decoy post. A refused redirect must therefore be
+// an error with NO results, and the home page must never be requested.
+func TestAudioBookBayRefusesRedirects(t *testing.T) {
+	for _, status := range []int{http.StatusMovedPermanently, http.StatusFound, http.StatusTemporaryRedirect} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			var requested []string
+			rt := abbRoundTripFunc(func(req *http.Request) *http.Response {
+				requested = append(requested, req.URL.String())
+				if req.URL.RawQuery != "" {
+					return abbStubResponse(status, "https://audiobookbay.lu/", "")
+				}
+				return abbStubResponse(http.StatusOK, "", abbPostPage("Home Page Decoy"))
+			})
+			a := newRedirectTestABB(t, &http.Client{Transport: rt}, "audiobookbay.lu")
+
+			results, err := a.searchDomain(context.Background(), "audiobookbay.lu", "Tolkien")
+			if err == nil {
+				t.Fatalf("searchDomain returned no error for a %d redirect (results=%d)", status, len(results))
+			}
+			wantStatus := "HTTP " + strconv.Itoa(status)
+			if !strings.Contains(err.Error(), wantStatus) {
+				t.Errorf("error %q does not mention %q", err, wantStatus)
+			}
+			if !strings.Contains(err.Error(), "https://audiobookbay.lu/") {
+				t.Errorf("error %q does not mention the Location", err)
+			}
+			if len(results) != 0 {
+				t.Errorf("got %d results from a refused redirect, want 0 (scraped the home page?)", len(results))
+			}
+			if len(requested) != 1 {
+				t.Errorf("redirect was followed: requests = %v", requested)
+			}
+
+			// Through Search, with only this mirror, the source as a whole fails.
+			results, err = a.Search(context.Background(), "Tolkien")
+			if err == nil || !strings.Contains(err.Error(), "all AudioBookBay domains failed") {
+				t.Errorf("Search error = %v, want all AudioBookBay domains failed", err)
+			}
+			if len(results) != 0 {
+				t.Errorf("Search returned %d results, want 0", len(results))
+			}
+		})
+	}
+}
+
+// Production has two dead mirrors; a future redirect on the live one must
+// not stop a later working mirror from answering, and the redirecting mirror
+// must not be followed.
+func TestAudioBookBaySearchFallsThroughRedirectingMirror(t *testing.T) {
+	hits := map[string]int{}
+	rt := abbRoundTripFunc(func(req *http.Request) *http.Response {
+		hits[req.URL.Host]++
+		switch req.URL.Host {
+		case "redirecting.test":
+			if req.URL.RawQuery != "" {
+				return abbStubResponse(http.StatusMovedPermanently, "https://redirecting.test/", "")
+			}
+			return abbStubResponse(http.StatusOK, "", abbPostPage("Home Page Decoy"))
+		case "good.test":
+			return abbStubResponse(http.StatusOK, "", abbPostPage("Good Result"))
+		}
+		t.Errorf("unexpected host %q", req.URL.Host)
+		return abbStubResponse(http.StatusInternalServerError, "", "")
+	})
+	a := newRedirectTestABB(t, &http.Client{Transport: rt}, "redirecting.test", "good.test")
+
+	results, err := a.Search(context.Background(), "Tolkien")
+	if err != nil {
+		t.Fatalf("Search returned error: %v", err)
+	}
+	if len(results) != 1 || results[0].Title != "Good Result" {
+		t.Fatalf("results = %+v, want exactly the second mirror's \"Good Result\"", results)
+	}
+	if hits["redirecting.test"] != 1 || hits["good.test"] != 1 {
+		t.Errorf("hits = %v, want 1 each (redirect must not be followed)", hits)
+	}
+}
+
+// The no-redirect policy belongs to AudioBookBay alone: the client handed in is
+// the one shared with every other source and must keep its redirect behaviour.
+// A plain 200 must still parse through the constructor-built client.
+func TestNewAudioBookBayDoesNotMutateSharedClientAndParses200(t *testing.T) {
+	// A pointer transport (not abbRoundTripFunc) so the Transport can be compared.
+	shared := &http.Client{Transport: &abbRoundTripper{body: abbPostPage("The Martian")}}
+	a := newRedirectTestABB(t, shared, "audiobookbay.lu")
+
+	if shared.CheckRedirect != nil {
+		t.Fatal("NewAudioBookBay mutated the shared client's CheckRedirect")
+	}
+	if a.client == shared {
+		t.Fatal("NewAudioBookBay kept the shared client pointer instead of a copy")
+	}
+	if a.client.Transport != shared.Transport {
+		t.Error("copy does not share the Transport (connection pool would be lost)")
+	}
+
+	results, err := a.searchDomain(context.Background(), "audiobookbay.lu", "The Martian")
+	if err != nil {
+		t.Fatalf("searchDomain returned error on a 200: %v", err)
+	}
+	if len(results) != 1 || results[0].Title != "The Martian" {
+		t.Fatalf("results = %+v, want one \"The Martian\"", results)
 	}
 }
 
