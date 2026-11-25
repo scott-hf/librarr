@@ -406,6 +406,11 @@ blanks and duplicates are dropped, order is the failover order, and a value that
 parses to nothing is ignored with a warning rather than disabling the source.
 Mirrors are replaced, not extended — trackers are untouched.
 
+To check what a running instance actually resolved, read `endpoints` on the
+source's entry in `GET /api/sources` (hostnames in failover order, after env
+overrides; the key is absent when a source has none). Tracker lists and
+operator-hosted service URLs (Prowlarr, Flibusta, BookTracker) are not reported.
+
 > **Mirror state, measured 2026-11-25.** Of the three mirrors the registry
 > lists, only `audiobookbay.lu` works. `audiobookbay.se` resolves to the *same
 > IP* as `.lu` and serves the `.lu` certificate, whose SAN list does not include

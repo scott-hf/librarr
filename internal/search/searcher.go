@@ -30,6 +30,17 @@ type Searcher interface {
 	DownloadType() string
 }
 
+// EndpointReporter is optionally implemented by a Searcher that talks to
+// configurable remote hosts. Endpoints returns the hostnames the source would
+// contact right now, read from the same resolved config the source itself
+// searches with (registry plus env overrides), never from a copy. Order is
+// preserved because for a failover source (AudioBookBay mirrors) it is the
+// order the hosts are tried in. Implementations return hostnames only, via
+// sources.HostList, so no path, query or credential can reach an API response.
+type EndpointReporter interface {
+	Endpoints() []string
+}
+
 // DefaultSourceTimeout caps how long any single source may take per search, so
 // one dead upstream cannot set the latency floor for every search. Measured
 // healthy audiobook sources answer in well under 2s (AudioBookBay ~0.8s, Open
@@ -360,6 +371,12 @@ func (m *Manager) GetSource(name string) Searcher {
 }
 
 // SourceMeta returns metadata about all sources for API responses.
+//
+// A source that implements EndpointReporter and has at least one resolved
+// endpoint also carries "endpoints": a list of hostnames in the order the
+// source tries them. The key is left out when there are none: an absent key
+// cannot be mistaken for "configured, and empty", and it matches how "health"
+// is already omitted until a source has something to report.
 func (m *Manager) SourceMeta() []map[string]interface{} {
 	var meta []map[string]interface{}
 	snapshot := m.health.Snapshot()
@@ -373,6 +390,11 @@ func (m *Manager) SourceMeta() []map[string]interface{} {
 		}
 		if h, ok := snapshot[s.Name()]; ok {
 			entry["health"] = h
+		}
+		if er, ok := s.(EndpointReporter); ok {
+			if eps := er.Endpoints(); len(eps) > 0 {
+				entry["endpoints"] = eps
+			}
 		}
 		meta = append(meta, entry)
 	}

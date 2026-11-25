@@ -102,6 +102,27 @@ func NormalizeDomain(value string) string {
 	return strings.ToLower(parsed.Host)
 }
 
+// HostList reduces endpoint values (hostnames or full URLs) to a de-duplicated
+// list of lower-case hosts, preserving the caller's order. It is the one place
+// that decides what may be shown about an endpoint: only the host (and port, if
+// any) survives. Paths, query strings and fragments are dropped, and a value
+// carrying userinfo ("user:pass@host") is dropped entirely rather than
+// stripped, so nothing credential-bearing can come out the other side. Blank
+// and unparseable values are skipped. Returns nil when nothing usable remains.
+func HostList(values ...string) []string {
+	var out []string
+	seen := make(map[string]bool, len(values))
+	for _, v := range values {
+		host := NormalizeDomain(v)
+		if host == "" || seen[host] {
+			continue
+		}
+		seen[host] = true
+		out = append(out, host)
+	}
+	return out
+}
+
 // Normalize canonicalizes host-only fields after any registry or env load.
 func (r *Registry) Normalize() *Registry {
 	r.Annas.Domain = NormalizeDomain(r.Annas.Domain)
