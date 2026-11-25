@@ -33,6 +33,24 @@
           "error":   {"type": "string"}
         }
       },
+      "SourceInfo": {
+        "type": "object",
+        "required": ["name", "label", "enabled", "search_tab", "download_type"],
+        "properties": {
+          "name":          {"type": "string", "description": "Driver identifier; matches SearchResult.source."},
+          "label":         {"type": "string"},
+          "enabled":       {"type": "boolean"},
+          "search_tab":    {"type": "string", "enum": ["main", "audiobook", "manga"]},
+          "download_type": {"type": "string", "enum": ["direct", "torrent"]},
+          "health":        {"type": "object", "description": "Circuit-breaker state and success/fail counters. Absent until the source has succeeded or failed once.", "additionalProperties": true},
+          "endpoints": {
+            "type": "array",
+            "items": {"type": "string"},
+            "minItems": 1,
+            "description": "Hostnames (with :port when non-default, never a scheme, path, query or credentials) this source is configured to contact right now, read from the resolved configuration: the sources registry after env overrides such as AUDIOBOOKBAY_MIRRORS and ANNAS_ARCHIVE_DOMAIN. For a failover source (audiobookbay) the order is the order the hosts are tried in. Absent, never an empty list, when the source has no resolved endpoint or does not report one. Operator-hosted service URLs (Prowlarr, Flibusta, BookTracker) and tracker lists are deliberately not reported."
+          }
+        }
+      },
       "DiscoverResponse": {
         "type": "object",
         "required": ["status", "error", "resolved_subject", "items"],
@@ -284,7 +302,13 @@
     "/api/sources": {
       "get": {
         "summary": "List configured search sources + health",
-        "description": "Returns each registered driver with enabled state, circuit-breaker status, last success/fail counters. Useful for AI agents debugging why a source isn't returning results."
+        "description": "Returns each registered driver with enabled state, circuit-breaker status, last success/fail counters, and the hostnames it is configured to contact (`endpoints`, resolved after env overrides, in failover order). Useful for AI agents debugging why a source isn't returning results, or confirming which mirror list a running deployment is really using.",
+        "responses": {
+          "200": {
+            "description": "One entry per registered driver",
+            "content": {"application/json": {"schema": {"type": "array", "items": {"$ref": "#/components/schemas/SourceInfo"}}}}
+          }
+        }
       }
     },
 
