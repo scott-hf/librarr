@@ -129,5 +129,34 @@ func (r *Registry) ApplyEnvOverrides(getenv func(string) string) *Registry {
 	if v := getenv("ANNAS_ARCHIVE_DOMAIN"); v != "" {
 		r.Annas.Domain = v
 	}
+	if v := getenv("AUDIOBOOKBAY_MIRRORS"); strings.TrimSpace(v) != "" {
+		// REPLACES the registry list, it does not extend it — same semantics as
+		// LIBRARR_SOURCES_URL. Order is preserved and is the failover order.
+		if mirrors := parseDomainList(v); len(mirrors) > 0 {
+			r.AudioBookBay.Mirrors = mirrors
+		} else {
+			// Keeping the registry list beats silently disabling the source: a
+			// typo ("AUDIOBOOKBAY_MIRRORS=,,") would otherwise look exactly like
+			// AudioBookBay having no results.
+			slog.Warn("AUDIOBOOKBAY_MIRRORS is set but contains no usable hostname; keeping the registry mirror list", "value", v)
+		}
+	}
 	return r.Normalize()
+}
+
+// parseDomainList splits a comma-separated hostname list into normalized hosts,
+// dropping blanks and unparseable entries and de-duplicating while preserving
+// the caller's order (which source drivers treat as failover order).
+func parseDomainList(value string) []string {
+	var out []string
+	seen := make(map[string]bool)
+	for _, part := range strings.Split(value, ",") {
+		host := NormalizeDomain(part)
+		if host == "" || seen[host] {
+			continue
+		}
+		seen[host] = true
+		out = append(out, host)
+	}
+	return out
 }

@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/JeremiahM37/librarr/internal/sources"
@@ -172,6 +173,71 @@ func TestApplyEnvOverrides(t *testing.T) {
 				t.Errorf("Annas.Domain = %q, want %q", r.Annas.Domain, tc.want)
 			}
 		})
+	}
+}
+
+// TestApplyEnvOverridesAudioBookBayMirrors covers AUDIOBOOKBAY_MIRRORS, the
+// override that lets a deployment drop a mirror the upstream registry still
+// lists (measured 2026-11: audiobookbay.se is the same host as .lu and is not
+// on its certificate, and audiobookbay.li serves no application at all) or add
+// a working one without pinning the whole registry via LIBRARR_SOURCES_PATH.
+func TestApplyEnvOverridesAudioBookBayMirrors(t *testing.T) {
+	registry := []string{"audiobookbay.lu", "audiobookbay.li", "audiobookbay.se"}
+
+	cases := []struct {
+		name string
+		env  string
+		want []string
+	}{
+		{"unset keeps the registry list", "", registry},
+		{"blank keeps the registry list", "   ", registry},
+		{"single host replaces the list", "audiobookbay.lu", []string{"audiobookbay.lu"}},
+		{"comma-separated list preserves failover order", "audiobookbay.lu,new-mirror.test", []string{"audiobookbay.lu", "new-mirror.test"}},
+		{"whitespace and scheme are normalized away", " https://AudioBookBay.LU/?s=x , new-mirror.test ", []string{"audiobookbay.lu", "new-mirror.test"}},
+		{"duplicates collapse, first position wins", "a.test,b.test,a.test", []string{"a.test", "b.test"}},
+		{"empty entries are dropped", "a.test,,b.test,", []string{"a.test", "b.test"}},
+		// A value that parses to nothing must NOT wipe the list: an empty mirror
+		// list makes AudioBookBay return no results, which is indistinguishable
+		// from the source simply having no matches.
+		{"unusable value keeps the registry list", ",,", registry},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := &sources.Registry{
+				AudioBookBay: sources.AudioBookBaySpec{Mirrors: append([]string(nil), registry...)},
+			}
+			r.ApplyEnvOverrides(func(k string) string {
+				if k == "AUDIOBOOKBAY_MIRRORS" {
+					return tc.env
+				}
+				return ""
+			})
+			if !slices.Equal(r.AudioBookBay.Mirrors, tc.want) {
+				t.Errorf("Mirrors = %#v, want %#v", r.AudioBookBay.Mirrors, tc.want)
+			}
+		})
+	}
+}
+
+// TestApplyEnvOverridesLeavesTrackersAlone pins the override's scope: it
+// replaces mirrors only, so a registry tracker update still reaches downloads.
+func TestApplyEnvOverridesLeavesTrackersAlone(t *testing.T) {
+	trackers := []string{"udp://tracker.example:1337/announce"}
+	r := &sources.Registry{AudioBookBay: sources.AudioBookBaySpec{
+		Mirrors:  []string{"audiobookbay.lu", "audiobookbay.li"},
+		Trackers: append([]string(nil), trackers...),
+	}}
+
+	r.ApplyEnvOverrides(func(k string) string {
+		if k == "AUDIOBOOKBAY_MIRRORS" {
+			return "audiobookbay.lu"
+		}
+		return ""
+	})
+
+	if !slices.Equal(r.AudioBookBay.Trackers, trackers) {
+		t.Errorf("Trackers = %#v, want %#v", r.AudioBookBay.Trackers, trackers)
 	}
 }
 

@@ -393,10 +393,29 @@ Anna's Archive, all of which are librarr's own files.
 |----------|---------|-------------|
 | `LIBRARR_SOURCES_URL` | (built-in default points at `librarr-sources`) | URL of a JSON sources registry, fetched at startup |
 | `LIBRARR_SOURCES_PATH` | | Local path to a sources registry JSON file; takes precedence over URL |
+| `AUDIOBOOKBAY_MIRRORS` | (from sources registry) | Comma-separated AudioBookBay hostnames, tried in order. Replaces the registry list |
 
 Resolution order on startup: `LIBRARR_SOURCES_PATH` → `LIBRARR_SOURCES_URL` → built-in default URL → on-disk cache (`<LIBRARR_DB_PATH dir>/sources-cache.json`) → empty registry. Successful URL fetches are cached so subsequent restarts work offline. If you set `LIBRARR_SOURCES_URL`, your value replaces the default — it does not stack on top of it.
 
 Legacy per-source env vars (e.g. `PROWLARR_URL` and other per-driver overrides) continue to be honored and override values loaded from the registry.
+
+`AUDIOBOOKBAY_MIRRORS` exists so one bad mirror does not force you to pin the
+whole registry with `LIBRARR_SOURCES_PATH`, which would also freeze every other
+source's endpoint updates. Hostnames only (a scheme and path are stripped);
+blanks and duplicates are dropped, order is the failover order, and a value that
+parses to nothing is ignored with a warning rather than disabling the source.
+Mirrors are replaced, not extended — trackers are untouched.
+
+> **Mirror state, measured 2026-11-25.** Of the three mirrors the registry
+> lists, only `audiobookbay.lu` works. `audiobookbay.se` resolves to the *same
+> IP* as `.lu` and serves the `.lu` certificate, whose SAN list does not include
+> it, so TLS verification fails; over plain HTTP it returns the real search page
+> from that same host, so it adds no redundancy. `audiobookbay.li` is a separate
+> IP with a valid, actively renewed certificate, but it completes the TLS
+> handshake and then serves nothing (`Empty reply from server` on port 80).
+> Both are only ever reached if `.lu` fails, so they cost nothing in normal
+> operation — they just slow down the eventual failure. Setting
+> `AUDIOBOOKBAY_MIRRORS=audiobookbay.lu` skips them.
 
 ### Search / Downloads
 
