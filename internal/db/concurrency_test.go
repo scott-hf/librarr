@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/JeremiahM37/librarr/internal/models"
 )
@@ -103,7 +104,17 @@ func TestConcurrentReadersAndWritersLoseNoWrites(t *testing.T) {
 			}
 		}(w)
 	}
-	writersWG.Wait()
+	// Without the busy timeout the writers do not error out quickly; against
+	// the old DSN they stall until the 10-minute test timeout. Bound the wait
+	// so a regression fails in seconds with a message that says what happened.
+	writersDone := make(chan struct{})
+	go func() { writersWG.Wait(); close(writersDone) }()
+	select {
+	case <-writersDone:
+	case <-time.After(60 * time.Second):
+		close(stop)
+		t.Fatalf("writers did not finish %d imports within 60s alongside concurrent readers (lock contention: is busy_timeout applied?)", writers*perWriter)
+	}
 	close(stop)
 	readersWG.Wait()
 	close(errs)
