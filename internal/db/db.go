@@ -28,7 +28,17 @@ func New(path string) (*DB, error) {
 		return nil, fmt.Errorf("create db directory: %w", err)
 	}
 
-	db, err := sql.Open("sqlite", path+"?_journal_mode=WAL&_busy_timeout=10000")
+	// modernc.org/sqlite reads DSN options as _pragma=NAME(VALUE), applied
+	// to every pooled connection. The mattn-style keys used before
+	// (_journal_mode=WAL&_busy_timeout=10000) were silently ignored, which
+	// left the file in rollback-journal mode with a zero busy timeout: a
+	// read on one pooled connection made a concurrent write fail at once
+	// with "database is locked", and callers that dropped the error (an
+	// import racing the scheduler) lost the write without a trace.
+	//
+	// Hand-ported from upstream 9e37b2b (only this hunk; the wanted-list
+	// work in that commit was not taken).
+	db, err := sql.Open("sqlite", path+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(10000)&_pragma=synchronous(NORMAL)")
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
